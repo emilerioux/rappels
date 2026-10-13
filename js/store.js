@@ -241,8 +241,8 @@ export const saveSubscription = async (sub) => (await req("POST", "/api/subscrib
 export const testPush = async () => (await req("POST", "/api/test-push", {})).json();
 
 /* ── Dictée : l'audio part au serveur, le texte revient. ── */
-export async function transcribe(blob) {
-  const res = await fetch(apiUrl() + "/api/transcribe", {
+export async function transcribe(blob, lists = []) {
+  const res = await fetch(`${apiUrl()}/api/transcribe?lists=${encodeURIComponent(lists.join(", "))}`, {
     method: "POST",
     headers: { Authorization: `Bearer ${token}`, "Content-Type": blob.type || "audio/mp4" },
     body: blob,

@@ -11,7 +11,7 @@ import { openSheet, closeSheet, sheetIsOpen, toast, esc } from "./ui.js";
 import { Spring, project, rubberband, tracker, capture, buzz, pop, REDUCED } from "./motion.js";
 
 const $ = (id) => document.getElementById(id);
-const VERSION = "v4";
+const VERSION = "v5";
 
 const I = {
   check: '<svg viewBox="0 0 24 24"><path d="M5 12.5l4.2 4.2L19 7"/></svg>',
@@ -768,7 +768,7 @@ async function refreshPush() {
    rappels qui commencent pareil. Ce qu'on touche l'emporte sur ce
    que la phrase disait. Le clavier reste ouvert pendant tout ça. */
 
-const input = $("composer-input"), chips = $("chips"), sugg = $("suggest"), sendBtn = $("send"), dotBtn = $("composer-list");
+const input = $("composer-input"), chips = $("chips"), sugg = $("suggest"), sendBtn = $("send");
 const composerEl = $("composer");
 let manual = {};            // choix touchés pour CE rappel : due, repeat, listId
 let composerList = null;    // liste choisie, gardée d'un ajout à l'autre
@@ -813,9 +813,6 @@ const panelRow = (label, body, cls = "") =>
 function renderComposer() {
   const d = draft();
   const now = Date.now();
-  const l = listOf(d.listId);
-  dotBtn.style.setProperty("--c", l.color);
-  dotBtn.setAttribute("aria-label", `Liste : ${l.name} (changer)`);
   sendBtn.disabled = !d.title;
   const typing = !!input.value.trim();
   composerEl.classList.toggle("active", typing || composerFocus);
@@ -869,7 +866,7 @@ function renderComposer() {
 
 /* Toucher une pastille ne doit pas fermer le clavier. */
 const keepFocus = () => { if (composerFocus) input.focus({ preventScroll: true }); };
-for (const el of [chips, sugg, dotBtn]) {
+for (const el of [chips, sugg, sendBtn, $("mic")]) {
   for (const ev of ["pointerdown", "mousedown"]) {
     el.addEventListener(ev, (e) => { if (!e.target.closest("[data-pick]")) e.preventDefault(); });
   }
@@ -935,18 +932,6 @@ sugg.addEventListener("click", (e) => {
   keepFocus();
 });
 
-/* Le rond à gauche du champ : passe à la liste suivante. */
-dotBtn.addEventListener("click", () => {
-  const lists = S.getState().lists;
-  const next = lists[(lists.findIndex((l) => l.id === draft().listId) + 1) % lists.length];
-  manual.listId = next.id;
-  composerList = next.id;
-  pop(dotBtn, 1.25);
-  buzz(6);
-  renderComposer();
-  keepFocus();
-});
-
 $("composer-form").addEventListener("submit", (e) => {
   e.preventDefault();
   const d = draft();
@@ -976,7 +961,8 @@ if (Voice.supported()) {
   const setMic = (state) => {
     mic.dataset.state = state;
     mic.setAttribute("aria-label", state === "rec" ? "Arrêter la dictée" : state === "busy" ? "Transcription en cours" : "Dicter");
-    input.placeholder = state === "rec" ? "Je t'écoute…" : state === "busy" ? "Transcription…" : "Nouveau rappel…";
+    input.placeholder = state === "rec" ? "Je t'écoute…" : state === "busy" ? "J'écris ton rappel…" : "Nouveau rappel";
+    composerEl.dataset.mic = state;
   };
   mic.addEventListener("click", async () => {
     if (Voice.recording()) { Voice.stop(); return; }
@@ -986,7 +972,7 @@ if (Voice.supported()) {
     try {
       setMic("rec");
       composerEl.classList.add("active");
-      res = await Voice.record({ onLevel: (lv) => { ring.style.transform = `scale(${1 + lv * 0.9})`; ring.style.opacity = String(0.25 + lv * 0.6); } });
+      res = await Voice.record({ onLevel: (lv) => { ring.style.transform = `scale(${1 + lv * 0.3})`; ring.style.opacity = String(0.75 + lv * 0.25); } });
     } catch (e) {
       setMic("");
       toast(e?.name === "NotAllowedError" ? "Micro refusé. Réglages iOS → Rappels → Micro." : "Micro indisponible.");
@@ -997,11 +983,17 @@ if (Voice.supported()) {
     busy = true;
     setMic("busy");
     try {
-      const text = await S.transcribe(res.blob);
+      const text = await S.transcribe(res.blob, S.getState().lists.map((x) => x.name));
       if (!text) toast("Je n'ai pas compris, réessaie.");
       else {
+        /* Le champ ne garde que l'action ; le moment, la répétition et la
+           liste passent dans les pastilles (où on peut les changer). */
         const base = input.value.trim();
-        input.value = (base ? base + " " : "") + text.replace(/[.!?…]+$/, "");
+        const p = parse((base ? base + " " : "") + text.replace(/[.!?…]+$/, ""), { lists: S.getState().lists });
+        input.value = p.title;
+        if (p.due) manual.due = p.due;
+        if (p.repeat) manual.repeat = p.repeat;
+        if (p.listId) { manual.listId = p.listId; }
         buzz([8, 30, 8]);
       }
     } catch (e) {

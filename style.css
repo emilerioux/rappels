@@ -39,7 +39,7 @@
   --r-xl: 28px; --r-lg: 20px; --r-md: 14px; --r-sm: 10px;
   --safe-t: env(safe-area-inset-top, 0px);
   --safe-b: env(safe-area-inset-bottom, 0px);
-  --composer-h: 64px;
+  --composer-h: 56px;
   --view: var(--accent);
   color-scheme: dark;
 }
@@ -98,13 +98,14 @@ svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width:
 code { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: .9em; }
 
 /* Retour tactile : sur l'appui, instantané. */
-.pill, .icon-btn, .primary-btn, .ghost-btn, .head-btn, .snz, .quick button, .send, .mic, .list-dot,
+.icon-btn, .primary-btn, .ghost-btn, .head-btn, .snz, .quick button, .mic,
 .add-btn, .le-dot, .le-del, .banner, .done-toggle, .act {
   transition: transform .12s ease-out, background-color .15s, opacity .15s, color .15s;
   touch-action: manipulation;
 }
 :is(.primary-btn, .ghost-btn, .snz, .banner, .quick button):active { transform: scale(.97); }
-:is(.pill, .icon-btn, .send, .mic, .list-dot, .add-btn, .le-dot, .le-del):active { transform: scale(.9); }
+:is(.icon-btn, .mic, .add-btn, .le-dot, .le-del):active { transform: scale(.9); }
+.send:active { transform: scale(.9); }
 :is(.head-btn, .done-toggle):active { opacity: .55; }
 
 /* ── Squelette ─────────────────────────────────────────────── */
@@ -313,15 +314,14 @@ body.searching .composer { opacity: 0; pointer-events: none; }
   background: var(--accent-soft); color: var(--accent-tx); font-weight: 600; font-size: .875rem;
 }
 
-/* ── Compositeur (flottant, translucide) ───────────────────── */
+/* ── Compositeur : barre d'outils collée en bas, comme Messages ── */
 .composer {
   position: absolute; left: 0; right: 0; bottom: 0; z-index: 10;
-  padding: 0 12px calc(var(--safe-b) + 10px);
   pointer-events: none;
   will-change: transform;
 }
-body.kb .composer { padding-bottom: 8px; }
 .composer > * { pointer-events: auto; }
+.composer > .suggest, .composer > .chips { margin-left: 10px; margin-right: 10px; }
 /* Panneau et complétion : n'apparaissent que quand on écrit. */
 .chips, .suggest {
   opacity: 0; transform: translateY(8px); pointer-events: none;
@@ -333,7 +333,7 @@ body.kb .composer { padding-bottom: 8px; }
 /* Le panneau : une rangée titrée par question, tout visible d'un coup. */
 .chips {
   display: flex; flex-direction: column; gap: 8px;
-  margin: 0 0 8px; padding: 10px 10px 10px 14px; border-radius: 22px;
+  margin-bottom: 8px; padding: 10px 10px 10px 14px; border-radius: 22px;
   background: var(--composer); box-shadow: var(--sh-float);
   -webkit-backdrop-filter: blur(28px) saturate(180%); backdrop-filter: blur(28px) saturate(180%);
   max-height: calc(var(--vvh, 100dvh) - 190px); overflow-y: auto; overscroll-behavior: contain;
@@ -375,7 +375,7 @@ body.kb .composer { padding-bottom: 8px; }
   font-size: 16px; cursor: pointer;
 }
 
-.suggest { display: flex; flex-direction: column; gap: 4px; margin: 0 2px 6px; }
+.suggest { display: flex; flex-direction: column; gap: 4px; margin-bottom: 6px; }
 .suggest:empty { display: none; }
 .sug {
   display: flex; align-items: center; gap: 10px; min-height: 42px; padding: 8px 14px; border-radius: 14px; text-align: left;
@@ -390,40 +390,52 @@ body.kb .composer { padding-bottom: 8px; }
 .sug small i { width: 7px; height: 7px; border-radius: 50%; }
 
 .composer-row {
-  display: flex; align-items: center; gap: 6px;
-  height: var(--composer-h); padding: 0 8px 0 10px; border-radius: 99px;
-  background: var(--composer); box-shadow: var(--sh-float);
-  -webkit-backdrop-filter: blur(28px) saturate(180%); backdrop-filter: blur(28px) saturate(180%);
+  display: flex; align-items: flex-end; gap: 8px;
+  padding: 8px 10px calc(var(--safe-b) + 8px) 12px;
+  background: var(--bar); border-top: .5px solid var(--hair);
+  -webkit-backdrop-filter: blur(24px) saturate(180%); backdrop-filter: blur(24px) saturate(180%);
 }
-.list-dot { flex: none; width: 40px; height: 40px; display: grid; place-items: center; border-radius: 50%; }
-.list-dot i {
-  width: 22px; height: 22px; border-radius: 50%; border: 2.5px solid var(--c);
-  box-shadow: 0 0 0 4px color-mix(in srgb, var(--c) 18%, transparent);
+body.kb .composer-row { padding-bottom: 8px; }
+/* Le champ (.cfield, pas .field : ce nom sert déjà aux formulaires des feuilles) : une capsule douce ; l'icône ⊕ dit « ajouter » sans mot de plus. */
+.cfield {
+  flex: 1; min-width: 0; display: flex; align-items: center; gap: 8px;
+  min-height: 40px; padding: 0 3px 0 11px; border-radius: 20px;
+  background: var(--fill); box-shadow: inset 0 0 0 .5px var(--line);
+  transition: box-shadow .2s, background-color .2s;
 }
+.composer.active .cfield { background: var(--card-2); box-shadow: inset 0 0 0 1.5px color-mix(in srgb, var(--accent) 55%, transparent); }
+.field-ic { width: 20px; height: 20px; color: var(--accent-tx); stroke-width: 2; }
 #composer-input {
-  flex: 1; min-width: 0; height: 44px; border: 0; outline: 0; background: none; padding: 0 4px;
+  flex: 1; min-width: 0; height: 40px; border: 0; outline: 0; background: none; padding: 0;
 }
 #composer-input::placeholder { color: var(--tx-3); }
-.mic, .send {
-  flex: none; width: 44px; height: 44px; border-radius: 50%; display: grid; place-items: center;
+.composer[data-mic="rec"] #composer-input::placeholder { color: var(--red-tx); }
+.composer[data-mic="busy"] #composer-input::placeholder { color: var(--accent-tx); }
+.mic {
+  flex: none; position: relative; width: 34px; height: 34px; border-radius: 50%;
+  display: grid; place-items: center; color: var(--tx-2);
 }
-.mic { color: var(--tx-2); position: relative; }
-.mic svg { position: relative; }
+.mic svg { position: relative; width: 20px; height: 20px; }
 .mic-ring {
-  position: absolute; inset: 2px; border-radius: 50%; background: var(--red); opacity: 0; transform: scale(.6);
+  position: absolute; inset: 0; border-radius: 50%; background: var(--red); opacity: 0; transform: scale(.6);
   transition: transform .08s linear, opacity .12s;
 }
 .mic[data-state="rec"] { color: #fff; }
 .mic[data-state="rec"] .mic-ring { opacity: .9; transform: scale(1); }
 .mic[data-state="busy"] { color: var(--accent-tx); }
 .mic[data-state="busy"]::after {
-  content: ""; position: absolute; inset: 3px; border-radius: 50%;
+  content: ""; position: absolute; inset: 1px; border-radius: 50%;
   border: 2.5px solid var(--accent-soft); border-top-color: var(--accent); animation: spin .8s linear infinite;
 }
 @keyframes spin { to { transform: rotate(360deg); } }
-.send { background: var(--accent); color: var(--accent-ink); }
-.send:disabled { background: var(--fill-2); color: var(--tx-3); }
+/* ↑ n'existe que quand il y a quelque chose à envoyer : il pousse depuis la droite. */
+.send {
+  flex: none; width: 40px; height: 40px; border-radius: 50%; display: grid; place-items: center;
+  background: var(--accent); color: var(--accent-ink);
+  transition: width .28s cubic-bezier(.2,.9,.25,1), margin .28s cubic-bezier(.2,.9,.25,1), transform .28s cubic-bezier(.2,.9,.3,1.2), opacity .18s;
+}
 .send svg { width: 20px; height: 20px; stroke-width: 2.6; }
+.send:disabled { width: 0; margin-left: -8px; transform: scale(.4); opacity: 0; pointer-events: none; }
 
 /* ── Boutons génériques ── */
 .primary-btn {
@@ -593,5 +605,5 @@ body.kb .toast, body.sheet-open .toast { bottom: auto; top: calc(var(--safe-t) +
   .composer-row, .chips, .sheet, .screen.scrolled .page-bar { -webkit-backdrop-filter: none; backdrop-filter: none; background: var(--card-2); }
 }
 @media (prefers-contrast: more) {
-  .composer-row, .card, .set-card { box-shadow: 0 0 0 1px var(--tx-3); }
+  .cfield, .card, .set-card { box-shadow: 0 0 0 1px var(--tx-3); }
 }

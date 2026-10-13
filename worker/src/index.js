@@ -292,7 +292,7 @@ export async function notifyDue(env) {
    L'app envoie l'enregistrement brut (mp4/AAC sur iPhone, webm
    ailleurs) ; Whisper le transcrit en français. Rien n'est gardé. */
 
-const PROMPT = "Rappel : demain à 15 h, appeler maman. Chaque mardi soir, sortir le recyclage. Acheter du lait à l'épicerie.";
+const PROMPT = "Rappel : demain à 15 h, appeler maman. Chaque mardi soir, sortir le recyclage. Acheter du lait pis des œufs à l'épicerie.";
 
 async function transcribe(req, env) {
   const buf = new Uint8Array(await req.arrayBuffer());
@@ -303,5 +303,48 @@ async function transcribe(req, env) {
   const out = await env.AI.run("@cf/openai/whisper-large-v3-turbo", {
     audio: btoa(bin), task: "transcribe", language: "fr", initial_prompt: PROMPT,
   });
-  return json({ text: String(out?.text || "").trim() });
+  const raw = String(out?.text || "").trim();
+  const lists = new URL(req.url).searchParams.get("lists") || "";
+  return json({ text: await condense(raw, lists, env), raw });
+}
+
+/* On parle en belles phrases ; le rappel, lui, garde juste l'action.
+   Un modèle de langue réécrit la phrase en commande courte, en
+   laissant les mots de moment (« demain à 15 h », « chaque mardi »)
+   que l'app sait lire. En cas de pépin, on rend la phrase telle quelle. */
+const CONDENSE = `Tu transformes une phrase dictée en rappel très court, en français québécois naturel.
+Règles :
+- Garde seulement l'action à faire, à l'infinitif, en 2 à 7 mots, avec les détails utiles (qui, quoi, où).
+- Garde au début, telles quelles, les indications de moment : demain, ce soir, lundi, à 15 h, dans 20 minutes, chaque mardi, le 28 octobre…
+- Si la phrase nomme une de ces listes, ajoute #nom à la fin : {LISTS}.
+- Enlève les formules (rappelle-moi, faudrait que je, il faut que, je dois, pense à, n'oublie pas, s'il te plaît), les raisons et les émotions.
+- « Ajoute X à ma liste » veut dire que X est la chose à faire ou à acheter : écris « acheter X » pour l'épicerie, sinon juste X.
+- « pis » veut dire « et » (la transcription l'écrit parfois « pie » ou « puis » entre deux choses : c'est aussi « et »). Mets les heures de l'après-midi et du soir en 24 h (3 h de l'après-midi → 15 h, 7 h le soir → 19 h).
+- Réponds uniquement avec le rappel, sans guillemets, sans point final.
+Exemples :
+« Faudrait vraiment que je pense à appeler ma mère demain vers trois heures pour lui souhaiter bonne fête » → demain à 15 h appeler maman pour sa fête
+« Hey rappelle-moi de sortir les vidanges chaque mardi soir parce que j'oublie tout le temps » → chaque mardi soir sortir les vidanges
+« Il faut que j'achète du lait pis des œufs en revenant, mets ça dans l'épicerie » → acheter du lait et des œufs #épicerie
+« Ajoute du pain pis du fromage dans ma liste d'épicerie s'il te plaît » → acheter du pain et du fromage #épicerie
+« Tous les jeudis soirs à huit heures je dois appeler grand-maman » → chaque jeudi à 20 h appeler grand-maman
+« Dans vingt minutes faut que je sorte le linge de la sécheuse sinon il va être tout froissé » → dans 20 minutes sortir le linge de la sécheuse
+« Appeler le dentiste » → appeler le dentiste`;
+
+async function condense(raw, lists, env) {
+  if (!raw || raw.split(/\s+/).length <= 4) return raw.replace(/[.!?…]+$/, "");
+  try {
+    const out = await env.AI.run("@cf/meta/llama-3.3-70b-instruct-fp8-fast", {
+      messages: [
+        { role: "system", content: CONDENSE.replace("{LISTS}", lists || "Perso, École, Épicerie") },
+        { role: "user", content: raw },
+      ],
+      max_tokens: 60,
+      temperature: 0.1,
+    });
+    const t = String(out?.response || "").split(/\r?\n/)[0].replace(/^[«"\s→-]+|[»".!\s]+$/g, "").trim();
+    return t && t.length <= 140 ? t : raw;
+  } catch (e) {
+    console.log("condense", e.message);
+    return raw;
+  }
 }

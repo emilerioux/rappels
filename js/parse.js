@@ -96,7 +96,7 @@ export function parse(input, { now = Date.now(), lists = [] } = {}) {
     return hit;
   };
 
-  let listId = null, rel = null, day = null, time = null, period = null, repeat = null;
+  let listId = null, rel = null, day = null, time = null, period = null, repeat = null, subj = false;
 
   /* 1. Liste : « #école » (au moins 2 lettres, début du nom). */
   take(/(?<![\w#])#([a-z0-9_-]{2,})/, (m) => {
@@ -107,7 +107,7 @@ export function parse(input, { now = Date.now(), lists = [] } = {}) {
   });
 
   /* 2. Formules d'entrée. */
-  take(/^\s*(?:(?:hey|eh|ok)\s+)?(?:rappelle[- ]?moi|rappelles?[- ]?moi|rappel|il\s+faut\s+que\s+je|faut\s+que\s+je|(?:n')?oublie\s+pas|ne\s+pas\s+oublier)\s*(?:de\s+|d'|que\s+|qu'|:\s*)?/, () => {});
+  take(/^\s*(?:(?:hey|eh|ok)\s+)?(?:rappelle[- ]?moi|rappelles?[- ]?moi|rappel|(?:il\s+)?(?:faut|faudrait)\s+(?:vraiment\s+)?que\s+(?:je|j')|je\s+dois|j'?dois|(?:il\s+)?faut|(?:pense|penser)\s+a|(?:n')?oublie\s+pas|ne\s+pas\s+oublier)\s*(?:de\s+|d'|que\s+|qu'|:\s*)?/, (m) => { subj = /\bque\s+(?:je\b|j')/.test(m[0]); });
 
   /* 3. Relatif : « dans 20 min », « dans 1h30 », « dans une heure ». */
   take(/\bdans\s+(?:une\s+)?demi[- ]?heure\b/, () => { rel = 30 * 60e3; });
@@ -184,7 +184,7 @@ export function parse(input, { now = Date.now(), lists = [] } = {}) {
     if (m[3] === "pm" && h < 12) h += 12;
     if (m[3] === "am" && h === 12) h = 0;
     if (h > 23 || mi > 59) return false;
-    time = [h, mi];
+    time = [h, mi, !m[3]];
   });
   take(new RegExp(`\\b${PREP}(\\d{1,2})\\s*(am|pm)\\b`), (m) => {
     let h = +m[1]; if (h > 12) return false;
@@ -192,6 +192,13 @@ export function parse(input, { now = Date.now(), lists = [] } = {}) {
     if (m[2] === "am" && h === 12) h = 0;
     time = [h, 0];
   });
+
+  /* « soir à 7 h » = 19 h ; « demain 3h » = 15 h (personne ne se fait
+     rappeler d'appeler sa mère à 3 h du matin). « 3h du matin » reste 3 h. */
+  if (time && time[2]) {
+    if (period != null && period >= 14 && time[0] < 12) time[0] += 12;
+    else if (period == null && time[0] >= 1 && time[0] <= 5 && !/\bdu\s+matin\b/.test(fold(text))) time[0] += 12;
+  }
 
   /* ── Échéance ── */
   let due = null;
@@ -226,6 +233,7 @@ export function parse(input, { now = Date.now(), lists = [] } = {}) {
   const head = /^(?:(?:de|du|à|a|le|la|pour|et|puis)\s+|d['’]|[,:–-]\s*)/i;
   const tail = /(?:\s+(?:à|a|le|la|pour|de|du|et)|\s*[,:–-])$/i;
   for (let i = 0; i < 4; i++) title = title.replace(head, "").replace(tail, "").trim();
+  if (subj) title = infinitive(title);
   title = tidy(title);
 
   return { title, due, repeat: due ? repeat : null, listId };
@@ -246,4 +254,23 @@ function absDate(now, d, mo, year) {
   let t = new Date(year || n.getFullYear(), mo, d).getTime();
   if (!year && t < startOfDay(now)) t = new Date(n.getFullYear() + 1, mo, d).getTime();
   return t;
+}
+
+/* « faudrait que j'appelle Marc » → « Appeler Marc » : après « que je »,
+   le premier verbe est conjugué ; on le remet à l'infinitif. */
+const IRREG = {
+  aille: "aller", fasse: "faire", sorte: "sortir", finisse: "finir", prenne: "prendre", mette: "mettre",
+  ecrive: "écrire", lise: "lire", dise: "dire", voie: "voir", parte: "partir", rende: "rendre", vende: "vendre",
+  reponde: "répondre", attende: "attendre", envoie: "envoyer", paie: "payer", nettoie: "nettoyer",
+  achete: "acheter", appelle: "appeler", rappelle: "rappeler", jette: "jeter", vienne: "venir",
+  revienne: "revenir", choisisse: "choisir", remplisse: "remplir", dorme: "dormir", coure: "courir",
+  boive: "boire", apprenne: "apprendre", comprenne: "comprendre", recoive: "recevoir", aie: "avoir",
+};
+function infinitive(title) {
+  return title.replace(/^(\p{L}+)/u, (w) => {
+    const f = fold(w);
+    if (IRREG[f]) return IRREG[f];
+    if (/[^aeiouy]es?$/.test(f) || /(ie|ue|ye|ee)$/.test(f)) return w.replace(/s$/, "") + "r";   // lave → laver, paye → payer
+    return w;
+  });
 }

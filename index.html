@@ -10,7 +10,7 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="Rappels">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<link rel="stylesheet" href="style.css?v=4">
+<link rel="stylesheet" href="style.css?v=5">
 <link rel="manifest" href="manifest.json">
 <link rel="apple-touch-icon" href="icons/icon-180.png">
 <link rel="icon" href="icons/icon-192.png" type="image/png">
@@ -62,12 +62,14 @@
     <div class="suggest" id="suggest"></div>
     <div class="chips" id="chips"></div>
     <form class="composer-row" id="composer-form" autocomplete="off">
-      <button type="button" class="list-dot" id="composer-list" aria-label="Changer de liste"><i></i></button>
-      <input id="composer-input" type="text" placeholder="Nouveau rappel…" enterkeyhint="done" autocapitalize="sentences" spellcheck="true">
-      <button type="button" class="mic" id="mic" aria-label="Dicter" hidden>
-        <i class="mic-ring" aria-hidden="true"></i>
-        <svg viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg>
-      </button>
+      <div class="cfield">
+        <svg class="field-ic" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 8v8M8 12h8"/></svg>
+        <input id="composer-input" type="text" placeholder="Nouveau rappel" enterkeyhint="done" autocapitalize="sentences" spellcheck="true" aria-label="Nouveau rappel">
+        <button type="button" class="mic" id="mic" aria-label="Dicter" hidden>
+          <i class="mic-ring" aria-hidden="true"></i>
+          <svg viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg>
+        </button>
+      </div>
       <button type="submit" class="send" id="send" aria-label="Ajouter" disabled>
         <svg viewBox="0 0 24 24"><path d="M12 19V5M5 12l7-7 7 7"/></svg>
       </button>
@@ -106,7 +108,7 @@
 <div class="sheet" id="sheet" hidden role="dialog" aria-modal="true"></div>
 <div class="toast" id="toast" role="status" aria-live="polite"></div>
 
-<script type="module" src="js/app.js?v=4"></script>
+<script type="module" src="js/app.js?v=5"></script>
 <script>
   if ("serviceWorker" in navigator) addEventListener("load", () => navigator.serviceWorker.register("sw.js"));
 </script>
