@@ -2,6 +2,7 @@ name = "rappels"
 main = "src/index.js"
 compatibility_date = "2026-09-01"
 workers_dev = true
+preview_urls = false
 
 # Toutes les minutes : envoie les notifs des rappels arrivés à échéance.
 [triggers]
@@ -10,7 +11,7 @@ crons = ["* * * * *"]
 [[d1_databases]]
 binding = "DB"
 database_name = "rappels"
-database_id = "local"
+database_id = "d88829c3-c403-41bb-9823-ab5393cb3603"
 
 [vars]
 VAPID_SUBJECT = "mailto:emilerioux@users.noreply.github.com"
