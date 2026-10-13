@@ -1,14 +1,14 @@
 /* Rappels — service worker.
    Bumper VERSION à CHAQUE déploiement, sinon le téléphone garde
    l'ancienne version en cache. */
-const VERSION = "v2";
+const VERSION = "v3";
 const CACHE_NAME = `rappels-${VERSION}`;
 
 const ASSETS = [
   "./",
   "./index.html",
-  "./style.css?v=2",
-  "./js/app.js?v=2",
+  "./style.css?v=3",
+  "./js/app.js?v=3",
   "./js/store.js",
   "./js/parse.js",
   "./js/suggest.js",

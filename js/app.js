@@ -10,7 +10,7 @@ import { openSheet, closeSheet, sheetIsOpen, toast, esc } from "./ui.js";
 import { Spring, project, rubberband, tracker, capture, buzz, pop, REDUCED } from "./motion.js";
 
 const $ = (id) => document.getElementById(id);
-const VERSION = "v2";
+const VERSION = "v3";
 
 const I = {
   check: '<svg viewBox="0 0 24 24"><path d="M5 12.5l4.2 4.2L19 7"/></svg>',
@@ -668,6 +668,14 @@ function quickDates(now = Date.now()) {
   return out;
 }
 
+/* Sous l'étiquette « Chaque », un mot suffit. */
+const REPEAT_SHORT = [[null, "Non"], ["daily", "Jour"], ["weekdays", "Lun–ven"], ["weekly", "Semaine"], ["monthly", "Mois"], ["yearly", "Année"]];
+const X_ICON = '<svg viewBox="0 0 24 24"><path d="M7 7l10 10M17 7 7 17"/></svg>';
+
+/* Une rangée titrée du panneau : « Quand », « Répéter », « Liste »… */
+const panelRow = (label, body, cls = "") =>
+  `<div class="cp-row${cls ? " " + cls : ""}"><span class="cp-label">${label}</span><div class="cp-chips">${body}</div></div>`;
+
 function renderComposer() {
   const d = draft();
   const now = Date.now();
@@ -676,12 +684,12 @@ function renderComposer() {
   dotBtn.setAttribute("aria-label", `Liste : ${l.name} (changer)`);
   sendBtn.disabled = !d.title;
   const typing = !!input.value.trim();
-  composerEl.classList.toggle("active", typing || composerFocus || !!menuEl);
+  composerEl.classList.toggle("active", typing || composerFocus);
 
   /* Complétion (sur le texte corrigé : « apeler » trouve « Appeler maman ») */
   const fix = typing && d.title ? Sg.spell(d.title) : null;
   const q = fix ? d.title.replace(fix.from, fix.to) : d.title;
-  const comps = typing ? Sg.complete(q || input.value, 3) : [];
+  const comps = typing ? Sg.complete(q || input.value, 2) : [];
   sugg._items = comps;
   sugg.innerHTML = comps.map((e, i) => {
     const h = Sg.habit(e.t), lst = S.getState().lists.find((x) => x.id === e.l);
@@ -689,25 +697,40 @@ function renderComposer() {
     return `<button type="button" class="sug" data-i="${i}">${I.history}<span>${esc(e.t)}</span>${meta ? `<small>${meta}</small>` : ""}</button>`;
   }).join("");
 
-  /* Pastilles */
-  const c = [];
-  if (fix) c.push(`<button type="button" class="chip fix" data-fix="${esc(fix.from)}" data-to="${esc(fix.to)}" aria-label="Corriger ${esc(fix.from)} en ${esc(fix.to)}">${I.pen}<s>${esc(fix.from)}</s>${esc(fix.to)}</button>`);
+  const rows = [];
+
+  /* Suggestions : seulement quand il y en a. */
+  const sg = [];
+  if (fix) sg.push(`<button type="button" class="chip fix" data-fix="${esc(fix.from)}" data-to="${esc(fix.to)}" aria-label="Corriger ${esc(fix.from)} en ${esc(fix.to)}">${I.pen}<s>${esc(fix.from)}</s>${esc(fix.to)}</button>`);
   const hab = typing && !d.due && d.title ? Sg.habit(d.title) : null;
   if (hab) {
-    c.push(`<button type="button" class="chip habit" data-due="${Sg.nextAt(hab.h, hab.m)}"${hab.repeat ? ` data-rep="${hab.repeat}"` : ""}${hab.list ? ` data-list="${hab.list}"` : ""}>
-      ${I.history}${hhmm(atDay(0, hab.h, hab.m))} · ${hab.times > 1 ? "comme d'hab" : "comme la dernière fois"}</button>`);
+    sg.push(`<button type="button" class="chip habit" data-due="${Sg.nextAt(hab.h, hab.m)}"${hab.repeat ? ` data-hrep="${hab.repeat}"` : ""}${hab.list ? ` data-hlist="${hab.list}"` : ""}>${I.history}${hhmm(atDay(0, hab.h, hab.m))} · ${hab.times > 1 ? "comme d'hab" : "comme la dernière fois"}</button>`);
   }
-  if (d.due) {
-    c.push(`<span class="chip on date"><label class="pick">${I.cal}<span>${esc(fmtDue(d.due, now))}</span>
-      <input type="datetime-local" data-pick value="${toInput(d.due)}" aria-label="Changer la date"></label>
-      <button type="button" class="x" data-clear aria-label="Enlever la date"><svg viewBox="0 0 24 24"><path d="M7 7l10 10M17 7 7 17"/></svg></button></span>`);
-  } else {
-    for (const [label, t] of quickDates(now)) c.push(`<button type="button" class="chip" data-due="${t}">${label}</button>`);
-    c.push(`<label class="chip pick">${I.cal}<span>Date…</span><input type="datetime-local" data-pick aria-label="Choisir une date"></label>`);
-  }
-  c.push(`<button type="button" class="chip${d.repeat ? " on" : ""}" data-menu="repeat">${I.repeat}${d.repeat ? esc(repeatLabel(d.repeat)) : "Répéter"}</button>`);
-  c.push(`<button type="button" class="chip lst" data-menu="list" style="--c:${l.color}"><i></i>${esc(l.name)}<svg class="caret" viewBox="0 0 24 24"><path d="m7 10 5 5 5-5"/></svg></button>`);
-  chips.innerHTML = c.join("");
+  if (sg.length) rows.push(panelRow("Idées", sg.join(""), "sg"));
+
+  /* Quand : tout est visible, le choix actif est en couleur. */
+  const quick = quickDates(now);
+  const custom = d.due && !quick.some(([, t]) => t === d.due);
+  const w = [`<button type="button" class="chip${d.due ? "" : " on"}" data-clear>Aucune</button>`];
+  for (const [label, t] of quick) w.push(`<button type="button" class="chip${d.due === t ? " on" : ""}" data-due="${t}">${label}</button>`);
+  w.push(custom
+    ? `<label class="chip pick on">${I.cal}<span>${esc(fmtDue(d.due, now))}</span><input type="datetime-local" data-pick value="${toInput(d.due)}" aria-label="Changer la date"></label>`
+    : `<label class="chip pick">${I.cal}<span>Autre date…</span><input type="datetime-local" data-pick aria-label="Choisir une date"></label>`);
+  rows.push(panelRow("Quand", w.join("")));
+
+  /* Répéter */
+  const rp = REPEAT_SHORT.map(([v, label]) =>
+    `<button type="button" class="chip${(d.repeat || null) === v ? " on" : ""}" data-rep="${v ?? ""}">${label}</button>`);
+  if (d.repeat && !REPEAT_SHORT.some(([v]) => v === d.repeat)) rp.push(`<button type="button" class="chip on" data-rep="${d.repeat}">${esc(repeatLabel(d.repeat))}</button>`);
+  rows.push(panelRow("Chaque", rp.join("")));
+
+  /* Liste */
+  const ls = S.getState().lists.map((x) =>
+    `<button type="button" class="chip lst${x.id === d.listId ? " on" : ""}" data-list="${x.id}" style="--c:${x.color}"><i></i>${esc(x.name)}</button>`);
+  ls.push(`<button type="button" class="chip add" data-new-list aria-label="Nouvelle liste">${I.plus}</button>`);
+  rows.push(panelRow("Liste", ls.join("")));
+
+  chips.innerHTML = rows.join("");
 }
 
 /* Toucher une pastille ne doit pas fermer le clavier. */
@@ -725,7 +748,7 @@ input.addEventListener("input", () => {
 input.addEventListener("focus", () => { composerFocus = true; renderComposer(); });
 input.addEventListener("blur", () => setTimeout(() => {
   composerFocus = document.activeElement === input;
-  if (!composerFocus && !menuEl) renderComposer();
+  if (!composerFocus) renderComposer();
 }, 180));
 
 const reEsc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -733,16 +756,26 @@ const reEsc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 chips.addEventListener("click", (e) => {
   const b = e.target.closest("button");
   if (!b) return;
-  if (b.dataset.menu) { toggleMenu(b, b.dataset.menu); return; }
-  if (b.dataset.fix) {
-    const re = new RegExp(`(^|[^\\p{L}])(${reEsc(b.dataset.fix)})(?![\\p{L}])`, "iu");
-    input.value = input.value.replace(re, (_, pre, w) => pre + (w[0] === w[0].toLowerCase() ? b.dataset.to.toLowerCase() : b.dataset.to));
-  } else if (b.dataset.due) {
-    manual.due = +b.dataset.due;
-    if (b.dataset.rep && !("repeat" in manual)) manual.repeat = b.dataset.rep;
-    if (b.dataset.list && !manual.listId && !draft().parsed.listId) manual.listId = b.dataset.list;
-  } else if ("clear" in b.dataset) {
+  const d = draft();
+  const ds = b.dataset;
+  if (ds.fix) {
+    const re = new RegExp(`(^|[^\\p{L}])(${reEsc(ds.fix)})(?![\\p{L}])`, "iu");
+    input.value = input.value.replace(re, (_, pre, w) => pre + (w[0] === w[0].toLowerCase() ? ds.to.toLowerCase() : ds.to));
+  } else if ("newList" in ds) {
+    openNewList((l) => { manual.listId = l.id; composerList = l.id; renderComposer(); });
+    return;
+  } else if (ds.due) {
+    manual.due = +ds.due;
+    if (ds.hrep && !("repeat" in manual)) manual.repeat = ds.hrep;
+    if (ds.hlist && !manual.listId && !d.parsed.listId) manual.listId = ds.hlist;
+  } else if ("clear" in ds) {
     manual.due = null;
+  } else if (ds.list) {
+    manual.listId = ds.list;
+    composerList = ds.list;
+  } else if ("rep" in ds) {
+    manual.repeat = ds.rep || null;
+    if (manual.repeat && !d.due) manual.due = Sg.nextAt(9, 0);   // une répétition a besoin d'une première date
   }
   buzz(6);
   renderComposer();
@@ -768,88 +801,22 @@ sugg.addEventListener("click", (e) => {
   keepFocus();
 });
 
-dotBtn.addEventListener("click", () => toggleMenu(dotBtn, "list"));
-
-/* ── Petit menu (répétition, liste) ──
-   Il naît de la pastille touchée et vit dans le compositeur, pour
-   suivre le clavier quand il bouge. */
-let menuEl = null, menuKey = null, menuClosedAt = 0, lastClosed = null;
-
-function toggleMenu(anchor, kind) {
-  if (menuKey === kind || (Date.now() - menuClosedAt < 300 && lastClosed === kind)) { closeMenu(); return; }
-  const d = draft();
-  let items;
-  if (kind === "repeat") {
-    items = [["", "Jamais"], ...REPEAT_CHOICES.slice(1)].map(([v, label]) => ({ label, v: v || null, on: (d.repeat || null) === (v || null) }));
-  } else {
-    items = S.getState().lists.map((l) => ({ label: l.name, v: l.id, dot: l.color, on: l.id === d.listId }));
-    items.push({ label: "Nouvelle liste…", v: "__new", icon: I.plus });
-  }
-  openMenu(anchor, kind, items, (it) => {
-    if (kind === "repeat") {
-      manual.repeat = it.v;
-      if (it.v && !d.due) manual.due = Sg.nextAt(9, 0);            // une répétition a besoin d'une première date
-    } else if (it.v === "__new") {
-      openNewList((l) => { manual.listId = l.id; composerList = l.id; renderComposer(); });
-      return;
-    } else {
-      manual.listId = it.v;
-      composerList = it.v;
-    }
-    renderComposer();
-    keepFocus();
-  });
-}
-
-function openMenu(anchor, kind, items, onPick) {
-  closeMenu(true);
-  const m = document.createElement("div");
-  m.className = "menu";
-  m.setAttribute("role", "menu");
-  m.innerHTML = items.map((it, i) => `<button type="button" role="menuitemradio" aria-checked="${!!it.on}" data-i="${i}">
-      ${it.dot ? `<i style="background:${it.dot}"></i>` : it.icon || ""}<span>${esc(it.label)}</span>${it.on ? I.check : ""}</button>`).join("");
-  composerEl.appendChild(m);
-  const cr = composerEl.getBoundingClientRect(), ar = anchor.getBoundingClientRect();
-  const w = m.offsetWidth;
-  const left = Math.min(Math.max(8, ar.left - cr.left), cr.width - w - 8);
-  m.style.left = `${left}px`;
-  m.style.bottom = `${cr.bottom - ar.top + 8}px`;
-  m.style.transformOrigin = `${ar.left - cr.left + ar.width / 2 - left}px 100%`;
-  if (!REDUCED.matches) m.animate([{ opacity: 0, transform: "scale(.86) translateY(6px)" }, { opacity: 1, transform: "none" }],
-    { duration: 240, easing: "cubic-bezier(.2,.9,.3,1.08)" });
-  for (const ev of ["pointerdown", "mousedown"]) m.addEventListener(ev, (e) => e.preventDefault());
-  m.addEventListener("click", (e) => {
-    const b = e.target.closest("button");
-    if (!b) return;
-    buzz(6);
-    closeMenu();
-    onPick(items[+b.dataset.i]);
-  });
-  menuEl = m;
-  menuKey = kind;
-  setTimeout(() => document.addEventListener("pointerdown", onOutside, true), 0);
+/* Le rond à gauche du champ : passe à la liste suivante. */
+dotBtn.addEventListener("click", () => {
+  const lists = S.getState().lists;
+  const next = lists[(lists.findIndex((l) => l.id === draft().listId) + 1) % lists.length];
+  manual.listId = next.id;
+  composerList = next.id;
+  pop(dotBtn, 1.25);
+  buzz(6);
   renderComposer();
-}
-
-function onOutside(e) {
-  if (menuEl && !menuEl.contains(e.target)) { lastClosed = menuKey; menuClosedAt = Date.now(); closeMenu(); }
-}
-
-function closeMenu(instant) {
-  document.removeEventListener("pointerdown", onOutside, true);
-  if (!menuEl) return;
-  const m = menuEl;
-  menuEl = null;
-  menuKey = null;
-  if (instant || REDUCED.matches) m.remove();
-  else m.animate([{ opacity: 1 }, { opacity: 0, transform: "scale(.94)" }], { duration: 140, easing: "ease-in" }).finished.then(() => m.remove(), () => m.remove());
-}
+  keepFocus();
+});
 
 $("composer-form").addEventListener("submit", (e) => {
   e.preventDefault();
   const d = draft();
   if (!d.title) return;
-  closeMenu(true);
   const r = S.addReminder({ title: tidy(d.title), due: d.due, repeat: d.repeat, listId: d.listId });
   Sg.remember(r);
   lastNewId = r.id;
@@ -899,6 +866,7 @@ if (window.visualViewport) {
   const fit = () => {
     const off = Math.max(0, innerHeight - vv.height - vv.offsetTop);
     comp.style.transform = off > 1 ? `translate3d(0,${-off}px,0)` : "";
+    document.documentElement.style.setProperty("--vvh", `${vv.height}px`);
     document.body.classList.toggle("kb", off > 1);
   };
   vv.addEventListener("resize", fit);
