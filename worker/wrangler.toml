@@ -1,0 +1,21 @@
+name = "rappels"
+main = "src/index.js"
+compatibility_date = "2026-09-01"
+workers_dev = true
+
+# Toutes les minutes : envoie les notifs des rappels arrivés à échéance.
+[triggers]
+crons = ["* * * * *"]
+
+[[d1_databases]]
+binding = "DB"
+database_name = "rappels"
+database_id = "local"
+
+[vars]
+VAPID_SUBJECT = "mailto:emilerioux@users.noreply.github.com"
+
+# Secrets (wrangler secret put …), jamais dans le repo :
+#   TOKEN          clé partagée entre l'app et le skill /rappel
+#   VAPID_PUBLIC   clé publique VAPID (base64url, 65 octets)
+#   VAPID_PRIVATE  clé privée VAPID (JWK en JSON)

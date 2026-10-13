@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Rappels</title>
+<meta name="theme-color" content="#000000" media="(prefers-color-scheme: dark)">
+<meta name="theme-color" content="#F2F2F7" media="(prefers-color-scheme: light)">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Rappels">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<link rel="stylesheet" href="style.css?v=1">
+<link rel="manifest" href="manifest.json">
+<link rel="apple-touch-icon" href="icons/icon-180.png">
+<link rel="icon" href="icons/icon-192.png" type="image/png">
+</head>
+<body>
+
+<div class="app" id="app">
+  <div class="page-bar" id="page-bar"><span class="page-bar-title" id="bar-title">Aujourd'hui</span></div>
+
+  <main class="scroll" id="scroll">
+    <div class="title-row">
+      <h1 class="big-title" id="title">Aujourd'hui</h1>
+      <button class="icon-btn" id="open-settings" aria-label="Réglages">
+        <svg viewBox="0 0 24 24"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg>
+        <i class="dot" id="settings-dot" hidden></i>
+      </button>
+    </div>
+    <p class="big-sub" id="subtitle"></p>
+    <nav class="pills" id="pills" aria-label="Listes"></nav>
+    <button class="banner" id="banner" hidden></button>
+    <div class="list" id="list"></div>
+  </main>
+
+  <div class="composer" id="composer">
+    <div class="chips" id="chips"></div>
+    <form class="composer-row" id="composer-form" autocomplete="off">
+      <button type="button" class="list-dot" id="composer-list" aria-label="Changer de liste"><i></i></button>
+      <input id="composer-input" type="text" placeholder="Nouveau rappel…" enterkeyhint="done" autocapitalize="sentences" spellcheck="true">
+      <button type="button" class="mic" id="mic" aria-label="Dicter" hidden>
+        <svg viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg>
+      </button>
+      <button type="submit" class="send" id="send" aria-label="Ajouter" disabled>
+        <svg viewBox="0 0 24 24"><path d="M12 19V5M5 12l7-7 7 7"/></svg>
+      </button>
+    </form>
+  </div>
+</div>
+
+<!-- Première ouverture : relier l'app au serveur -->
+<div class="setup" id="setup" hidden>
+  <div class="setup-card">
+    <img src="icons/icon-180.png" alt="" class="setup-icon">
+    <h1>Rappels</h1>
+    <div id="setup-safari" hidden>
+      <p>Pour recevoir les notifications, l'app doit être sur ton écran d'accueil.</p>
+      <ol class="setup-steps">
+        <li><button class="primary-btn" id="copy-key">Copier ma clé</button></li>
+        <li>Touche <b>Partager</b> <svg viewBox="0 0 24 24" class="inline"><path d="M12 3v12M8 7l4-4 4 4"/><path d="M5 12v7a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-7"/></svg> puis <b>Sur l'écran d'accueil</b>.</li>
+        <li>Ouvre <b>Rappels</b> depuis l'écran d'accueil et colle ta clé.</li>
+      </ol>
+      <p class="note">Ou continue ici, sans notifications :</p>
+    </div>
+    <form id="setup-form">
+      <label class="field"><span>Ta clé</span>
+        <input id="setup-key" type="text" placeholder="Colle ta clé ici" autocapitalize="off" autocorrect="off" spellcheck="false">
+      </label>
+      <div class="setup-actions">
+        <button type="button" class="ghost-btn" id="paste-key">Coller</button>
+        <button type="submit" class="primary-btn">Connecter</button>
+      </div>
+      <p class="setup-err" id="setup-err"></p>
+    </form>
+  </div>
+</div>
+
+<div class="scrim" id="scrim" hidden></div>
+<div class="sheet" id="sheet" hidden role="dialog" aria-modal="true"></div>
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+<script type="module" src="js/app.js?v=1"></script>
+<script>
+  if ("serviceWorker" in navigator) addEventListener("load", () => navigator.serviceWorker.register("sw.js"));
+</script>
+</body>
+</html>
