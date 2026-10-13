@@ -239,3 +239,14 @@ export async function vapidKey() {
 }
 export const saveSubscription = async (sub) => (await req("POST", "/api/subscribe", sub.toJSON())).ok;
 export const testPush = async () => (await req("POST", "/api/test-push", {})).json();
+
+/* ── Dictée : l'audio part au serveur, le texte revient. ── */
+export async function transcribe(blob) {
+  const res = await fetch(apiUrl() + "/api/transcribe", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}`, "Content-Type": blob.type || "audio/mp4" },
+    body: blob,
+  });
+  if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || `serveur ${res.status}`);
+  return (await res.json()).text || "";
+}

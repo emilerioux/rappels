@@ -39,6 +39,10 @@ export default {
     const auth = req.headers.get("Authorization") || "";
     if (!env.TOKEN || auth !== `Bearer ${env.TOKEN}`) return fail(401, "clé invalide");
 
+    if (path === "/api/transcribe" && req.method === "POST") {
+      try { return await transcribe(req, env); } catch (e) { return fail(502, `transcription impossible : ${e.message}`); }
+    }
+
     let body = {};
     if (req.method === "POST" || req.method === "PATCH" || req.method === "DELETE") {
       try { body = await req.json(); } catch (_) { body = {}; }
@@ -282,4 +286,22 @@ export async function notifyDue(env) {
     });
   }
   return due.length;
+}
+
+/* ── Dictée ──────────────────────────────────────────────────
+   L'app envoie l'enregistrement brut (mp4/AAC sur iPhone, webm
+   ailleurs) ; Whisper le transcrit en français. Rien n'est gardé. */
+
+const PROMPT = "Rappel : demain à 15 h, appeler maman. Chaque mardi soir, sortir le recyclage. Acheter du lait à l'épicerie.";
+
+async function transcribe(req, env) {
+  const buf = new Uint8Array(await req.arrayBuffer());
+  if (!buf.length) throw new HttpError(400, "audio vide");
+  if (buf.length > 5e6) return fail(413, "enregistrement trop long");
+  let bin = "";
+  for (let i = 0; i < buf.length; i += 0x8000) bin += String.fromCharCode.apply(null, buf.subarray(i, i + 0x8000));
+  const out = await env.AI.run("@cf/openai/whisper-large-v3-turbo", {
+    audio: btoa(bin), task: "transcribe", language: "fr", initial_prompt: PROMPT,
+  });
+  return json({ text: String(out?.text || "").trim() });
 }

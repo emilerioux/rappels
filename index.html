@@ -10,7 +10,7 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="Rappels">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<link rel="stylesheet" href="style.css?v=3">
+<link rel="stylesheet" href="style.css?v=4">
 <link rel="manifest" href="manifest.json">
 <link rel="apple-touch-icon" href="icons/icon-180.png">
 <link rel="icon" href="icons/icon-192.png" type="image/png">
@@ -18,21 +18,45 @@
 <body>
 
 <div class="app" id="app">
-  <div class="page-bar" id="page-bar"><span class="page-bar-title" id="bar-title">Aujourd'hui</span></div>
 
-  <main class="scroll" id="scroll">
-    <div class="title-row">
-      <h1 class="big-title" id="title">Aujourd'hui</h1>
-      <button class="icon-btn" id="open-settings" aria-label="Réglages">
-        <svg viewBox="0 0 24 24"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg>
-        <i class="dot" id="settings-dot" hidden></i>
+  <!-- Accueil : résumé du jour, recherche, vues et listes -->
+  <section class="screen home" id="home">
+    <div class="page-bar"><span class="page-bar-title">Rappels</span></div>
+    <main class="scroll" id="home-scroll">
+      <div class="title-row">
+        <div>
+          <h1 class="big-title">Rappels</h1>
+          <p class="big-sub" id="today-date"></p>
+        </div>
+        <button class="icon-btn" id="open-settings" aria-label="Réglages">
+          <svg viewBox="0 0 24 24"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg>
+          <i class="dot" id="settings-dot" hidden></i>
+        </button>
+      </div>
+      <div class="summary" id="summary"></div>
+      <button class="banner" id="banner" hidden></button>
+      <label class="search">
+        <svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+        <input id="search" type="search" placeholder="Rechercher" enterkeyhint="search" autocomplete="off">
+      </label>
+      <div id="home-body"></div>
+    </main>
+  </section>
+
+  <!-- Une vue ou une liste, poussée par-dessus l'accueil -->
+  <section class="screen page" id="page" hidden>
+    <div class="page-bar">
+      <button class="back" id="back" aria-label="Retour aux listes">
+        <svg viewBox="0 0 24 24"><path d="m15 5-7 7 7 7"/></svg><span>Rappels</span>
       </button>
+      <span class="page-bar-title" id="bar-title"></span>
     </div>
-    <p class="big-sub" id="subtitle"></p>
-    <nav class="pills" id="pills" aria-label="Listes"></nav>
-    <button class="banner" id="banner" hidden></button>
-    <div class="list" id="list"></div>
-  </main>
+    <main class="scroll" id="scroll">
+      <h1 class="big-title" id="title"></h1>
+      <p class="big-sub" id="subtitle"></p>
+      <div class="list" id="list"></div>
+    </main>
+  </section>
 
   <div class="composer" id="composer">
     <div class="suggest" id="suggest"></div>
@@ -41,6 +65,7 @@
       <button type="button" class="list-dot" id="composer-list" aria-label="Changer de liste"><i></i></button>
       <input id="composer-input" type="text" placeholder="Nouveau rappel…" enterkeyhint="done" autocapitalize="sentences" spellcheck="true">
       <button type="button" class="mic" id="mic" aria-label="Dicter" hidden>
+        <i class="mic-ring" aria-hidden="true"></i>
         <svg viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg>
       </button>
       <button type="submit" class="send" id="send" aria-label="Ajouter" disabled>
@@ -81,7 +106,7 @@
 <div class="sheet" id="sheet" hidden role="dialog" aria-modal="true"></div>
 <div class="toast" id="toast" role="status" aria-live="polite"></div>
 
-<script type="module" src="js/app.js?v=3"></script>
+<script type="module" src="js/app.js?v=4"></script>
 <script>
   if ("serviceWorker" in navigator) addEventListener("load", () => navigator.serviceWorker.register("sw.js"));
 </script>

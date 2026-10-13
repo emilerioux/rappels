@@ -2,7 +2,8 @@
    app.js — l'écran principal, le compositeur, les feuilles.
    ============================================================ */
 
-import { parse, tidy } from "./parse.js";
+import { parse, tidy, fold } from "./parse.js";
+import * as Voice from "./voice.js";
 import * as Sg from "./suggest.js";
 import { fmtDue, hhmm, dayLabel, startOfDay, addDays, repeatLabel, REPEAT_CHOICES, toInput, fromInput } from "./dates.js";
 import * as S from "./store.js";
@@ -10,7 +11,7 @@ import { openSheet, closeSheet, sheetIsOpen, toast, esc } from "./ui.js";
 import { Spring, project, rubberband, tracker, capture, buzz, pop, REDUCED } from "./motion.js";
 
 const $ = (id) => document.getElementById(id);
-const VERSION = "v3";
+const VERSION = "v4";
 
 const I = {
   check: '<svg viewBox="0 0 24 24"><path d="M5 12.5l4.2 4.2L19 7"/></svg>',
@@ -22,6 +23,10 @@ const I = {
   plus: '<svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>',
   pen: '<svg viewBox="0 0 24 24"><path d="M4 20h4L19 9l-4-4L4 16z"/><path d="m13.5 6.5 4 4"/></svg>',
   history: '<svg viewBox="0 0 24 24"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5M12 7v5l3 2"/></svg>',
+  sun: '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>',
+  tray: '<svg viewBox="0 0 24 24"><path d="M3 13h5l1.5 3h5L16 13h5"/><path d="M5.5 5h13L21 13v5a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-5z"/></svg>',
+  alert: '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7.5v5.5M12 16.5v.01"/></svg>',
+  chev: '<svg class="chev" viewBox="0 0 24 24"><path d="m9 6 6 6-6 6"/></svg>',
   list: '<svg viewBox="0 0 24 24"><path d="M9 6h11M9 12h11M9 18h11"/><circle cx="4.5" cy="6" r="1"/><circle cx="4.5" cy="12" r="1"/><circle cx="4.5" cy="18" r="1"/></svg>',
 };
 
@@ -29,10 +34,8 @@ const isIOS = /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platfor
 const isStandalone = matchMedia("(display-mode: standalone)").matches || navigator.standalone === true;
 const pushCapable = "serviceWorker" in navigator && "PushManager" in window && "Notification" in window;
 
-const lsGet = (k) => { try { return localStorage.getItem(k); } catch (_) { return null; } };
-const lsSet = (k, v) => { try { localStorage.setItem(k, v); } catch (_) {} };
 
-let view = lsGet("rp-view") || "today";
+let view = "home";         // « home » ou une vue : today, scheduled, all, late, l:<id>
 let showDone = false;
 let pushOn = false;
 let lastNewId = null;
@@ -45,20 +48,24 @@ const short = (s) => (s.length > 28 ? s.slice(0, 27) + "…" : s);
 
 /* ══ Vues et regroupements ═══════════════════════════════════ */
 
-function views() {
-  const st = S.getState();
-  return [
-    { id: "today", name: "Aujourd'hui" },
-    { id: "scheduled", name: "Planifiés" },
-    { id: "all", name: "Tout" },
-    ...st.lists.map((l) => ({ id: `l:${l.id}`, name: l.name, color: l.color, list: l })),
-  ];
+const SMART = {
+  today: { name: "Aujourd'hui", color: "var(--accent)", icon: I.sun },
+  scheduled: { name: "Planifiés", color: "var(--orange)", icon: I.cal },
+  all: { name: "Tout", color: "var(--gray)", icon: I.tray },
+  late: { name: "En retard", color: "var(--red)", icon: I.alert },
+};
+
+function viewInfo(v) {
+  if (SMART[v]) return { id: v, ...SMART[v] };
+  const l = S.getState().lists.find((x) => `l:${x.id}` === v);
+  return l ? { id: v, name: l.name, color: l.color, list: l } : null;
 }
 
 function inView(r, v, now) {
   const t = when(r);
   if (v === "today") return t != null && t < addDays(startOfDay(now), 1);
   if (v === "scheduled") return t != null;
+  if (v === "late") return t != null && t < now;
   if (v === "all") return true;
   return r.list_id === v.slice(2);
 }
@@ -74,7 +81,7 @@ function sections(items, v, now) {
   };
   for (const r of [...items].sort(byWhen)) {
     const t = when(r);
-    if (t != null && t < now) { put("late", "En retard", "late", r); continue; }
+    if (t != null && t < now) { put("late", v === "late" ? "" : "En retard", "late", r); continue; }
     if (v === "today") { put("today", "Plus tard aujourd'hui", "", r); continue; }
     if (v === "scheduled") { const d = startOfDay(t); put(`d${d}`, dayLabel(d, now), d === today ? "accent" : "", r); continue; }
     if (t == null) put("none", "Sans date", "", r);
@@ -90,7 +97,8 @@ function sections(items, v, now) {
 
 /* ══ Rendu ═══════════════════════════════════════════════════ */
 
-const listEl = $("list");
+const listEl = $("list"), homeBody = $("home-body");
+let query = "";
 
 function rowHtml(r, now, showList, compact) {
   const l = listOf(r.list_id);
@@ -126,50 +134,100 @@ function emptyHtml(v, anyDone) {
   if (anyDone) return `<div class="empty-state"><div class="empty-emoji">✨</div><b>Tout est fait</b><p>Rien d'autre ici. Bravo.</p></div>`;
   if (v === "today") return `<div class="empty-state"><div class="empty-emoji">☀️</div><b>Rien pour aujourd'hui</b>
     <p>Écris ou dicte un rappel en bas, comme tu le dirais :<br><span class="ex">demain 15h appeler maman</span></p></div>`;
+  if (v === "late") return `<div class="empty-state"><div class="empty-emoji">👌</div><b>Rien en retard</b><p>T'es à jour.</p></div>`;
   return `<div class="empty-state"><div class="empty-emoji">🗒️</div><b>Aucun rappel</b><p>Ajoute-en un en bas.</p></div>`;
 }
 
-function render() {
-  const st = S.getState();
-  const now = Date.now();
-  const all = views();
-  if (!all.some((v) => v.id === view)) view = "today";
-  const v = all.find((x) => x.id === view);
+/* ── Accueil ── */
 
+function renderHome(now) {
+  const st = S.getState();
+  const pending = st.reminders.filter((r) => !r.done);
+  const count = (v) => pending.filter((r) => inView(r, v, now)).length;
+  const todayN = count("today"), lateN = count("late");
+  const doneToday = st.reminders.filter((r) => r.done_at && r.done_at >= startOfDay(now)).length;
+
+  $("today-date").textContent = new Date(now).toLocaleDateString("fr-CA", { weekday: "long", day: "numeric", month: "long" });
+
+  /* Résumé : anneau de progression + une phrase */
+  const total = todayN + doneToday;
+  const pct = total ? doneToday / total : 0;
+  const next = pending.filter((r) => when(r) != null && when(r) >= now).sort(byWhen)[0];
+  let main, sub = [];
+  if (!total) main = "Rien de prévu aujourd'hui";
+  else if (!todayN) main = "Tout est fait pour aujourd'hui 🎉";
+  else main = `${todayN} à faire aujourd'hui`;
+  if (lateN) sub.push(`<span class="late">${lateN} en retard</span>`);
+  if (doneToday) sub.push(`${doneToday} fait${doneToday > 1 ? "s" : ""}`);
+  if (next) sub.push(`Prochain : ${esc(short(next.title))} ${dayDiffLabel(when(next), now)}`);
+  $("summary").innerHTML = `
+    <div class="ring${total && !todayN ? " full" : ""}${pct ? "" : " zero"}" role="img" aria-label="${doneToday} sur ${total} faits aujourd'hui">
+      <svg viewBox="0 0 44 44"><circle class="ring-bg" cx="22" cy="22" r="18"/>
+        <circle class="ring-fg" cx="22" cy="22" r="18" pathLength="100" stroke-dasharray="${(pct * 100).toFixed(1)} 100"/></svg>
+      <span>${total ? `${doneToday}/${total}` : "–"}</span>
+    </div>
+    <div class="sum-text"><b>${main}</b>${sub.length ? `<small>${sub.join(" · ")}</small>` : ""}</div>`;
+
+  /* Recherche : remplace les cartes tant qu'il y a du texte */
+  if (query.trim()) {
+    const q = fold(query.trim());
+    const hits = st.reminders.filter((r) => fold(`${r.title} ${r.notes}`).includes(q)).sort((a, b) => a.done - b.done || byWhen(a, b));
+    homeBody.innerHTML = hits.length
+      ? `<section class="sec"><h2 class="sec-h">${hits.length} résultat${hits.length > 1 ? "s" : ""}</h2>
+         <div class="card">${hits.map((r) => rowHtml(r, now, true)).join("")}</div></section>`
+      : `<div class="empty-state"><div class="empty-emoji">🔎</div><b>Aucun rappel trouvé</b><p>pour « ${esc(query.trim())} »</p></div>`;
+    return;
+  }
+
+  const cards = ["today", "scheduled", "all", "late"].map((v) => {
+    const n = count(v);
+    return `<button class="vcard${v === "late" && !n ? " calm" : ""}" data-open="${v}" style="--c:${SMART[v].color}">
+      <span class="vc-ic">${SMART[v].icon}</span><b class="vc-n">${n}</b><span class="vc-name">${SMART[v].name}</span></button>`;
+  }).join("");
+  const lists = st.lists.map((l) => `
+    <button class="lrow" data-open="l:${l.id}" style="--c:${l.color}">
+      <span class="l-ic">${I.list}</span><span class="l-name">${esc(l.name)}</span>
+      <span class="l-n">${count(`l:${l.id}`) || ""}</span>${I.chev}</button>`).join("");
+  homeBody.innerHTML = `<div class="cards">${cards}</div>
+    <h2 class="sec-h home-h">Mes listes</h2>
+    <div class="card lists">${lists}
+      <button class="lrow add" data-new-list><span class="l-ic">${I.plus}</span><span class="l-name">Nouvelle liste</span></button></div>`;
+}
+
+/* « à 15 h », « demain 9 h », « jeu. 9 h » */
+function dayDiffLabel(t, now) {
+  const d = dayLabel(t, now);
+  return d === "Aujourd'hui" ? `à ${hhmm(t)}` : `${d.toLowerCase()} ${hhmm(t)}`;
+}
+
+/* ── Une vue / une liste ── */
+
+function renderPage(now) {
+  const st = S.getState();
+  const v = viewInfo(view);
+  if (!v) return;
   $("title").textContent = v.name;
   $("bar-title").textContent = v.name;
-  document.documentElement.style.setProperty("--view", v.color || "var(--accent)");
+  $("page").style.setProperty("--view", v.color);
 
   const pending = st.reminders.filter((r) => !r.done);
-  const lateCount = pending.filter((r) => when(r) != null && when(r) < now).length;
-
-  /* Sous-titre */
-  const sub = v.id === "today"
-    ? new Date(now).toLocaleDateString("fr-CA", { weekday: "long", day: "numeric", month: "long" })
-    : "";
-  $("subtitle").textContent = sub;
-  $("subtitle").hidden = !sub;
-
-  /* Pastilles */
-  $("pills").innerHTML = all.map((x) => {
-    const n = pending.filter((r) => inView(r, x.id, now)).length;
-    const late = x.id === "today" && lateCount > 0;
-    return `<button class="pill${x.id === view ? " on" : ""}" data-view="${x.id}" ${x.color ? `style="--c:${x.color}"` : ""}>
-      ${x.color ? '<i class="pdot"></i>' : ""}<span>${esc(x.name)}</span>${n ? `<b class="${late ? "late" : ""}">${n}</b>` : ""}</button>`;
-  }).join("") + `<button class="pill add" data-new-list aria-label="Nouvelle liste">${I.plus}</button>`;
-
-  /* Rappels */
   const items = pending.filter((r) => inView(r, view, now));
   const showList = !v.list;
-  const done = st.reminders.filter((r) => r.done && inView({ ...r, snooze: null, due: r.due ?? null }, view === "today" || view === "scheduled" ? "all" : view, now))
+  const doneScope = view === "today" || view === "scheduled" || view === "late" ? "all" : view;
+  const done = st.reminders.filter((r) => r.done && inView({ ...r, snooze: null }, doneScope, now))
     .filter((r) => view !== "today" || (r.done_at && r.done_at >= startOfDay(now)))
+    .filter((r) => view !== "late")
     .sort((a, b) => b.done_at - a.done_at);
+
+  $("subtitle").textContent = view === "today"
+    ? new Date(now).toLocaleDateString("fr-CA", { weekday: "long", day: "numeric", month: "long" })
+    : items.length ? `${items.length} rappel${items.length > 1 ? "s" : ""}` : "";
 
   let html = "";
   if (!items.length) html += emptyHtml(view, done.length > 0);
   for (const s of sections(items, view, now)) {
     html += `<section class="sec">${s.title ? `<h2 class="sec-h ${s.tone}">${esc(s.title)}<small>${s.items.length}</small></h2>` : ""}
-      <div class="card">${s.items.map((r) => rowHtml(r, now, showList, s.key === "today" || s.key.startsWith("d"))).join("")}</div></section>`;
+      <div class="card">${s.items.map((r) => rowHtml(r, now, showList, s.key === "today" || s.key === "tomorrow" || s.key.startsWith("d"))).join("")}</div></section>`;
   }
   if (done.length) {
     html += `<section class="sec done-sec"><button class="done-toggle" id="done-toggle" aria-expanded="${showDone}">
@@ -178,9 +236,16 @@ function render() {
       ${showDone ? `<div class="card">${done.map((r) => rowHtml(r, now, showList)).join("")}</div>` : ""}</section>`;
   }
   listEl.innerHTML = html;
+}
+
+function render() {
+  const now = Date.now();
+  if (view !== "home" && !viewInfo(view)) goHome();
+  renderHome(now);
+  if (view !== "home") renderPage(now);
 
   if (lastNewId) {
-    const el = listEl.querySelector(`.row[data-id="${lastNewId}"]`);
+    const el = (view === "home" ? homeBody : listEl).querySelector(`.row[data-id="${lastNewId}"]`);
     if (el && !REDUCED.matches) {
       el.animate([{ transform: "translateY(10px) scale(.98)", opacity: 0 }, { transform: "none", opacity: 1 }],
         { duration: 380, easing: "cubic-bezier(.2,.9,.25,1)" });
@@ -191,6 +256,7 @@ function render() {
 
   renderBanner();
   renderComposer();
+  const lateCount = S.getState().reminders.filter((r) => !r.done && when(r) != null && when(r) < now).length;
   if ("setAppBadge" in navigator) {
     try { lateCount ? navigator.setAppBadge(lateCount) : navigator.clearAppBadge(); } catch (_) {}
   }
@@ -212,26 +278,96 @@ function renderBanner() {
   $("settings-dot").hidden = !(pushCapable && !pushOn) && status !== "badkey";
 }
 
-/* ══ Interactions sur les rangées ════════════════════════════ */
+/* ══ Navigation : accueil ⇄ liste ════════════════════════════
+   La liste glisse par-dessus l'accueil sur un ressort critique ;
+   l'accueil recule un peu et s'assombrit. On revient avec ‹ ou en
+   tirant depuis le bord gauche : le doigt mène, puis la vitesse
+   projetée décide si on revient ou si on reste. */
 
-$("pills").addEventListener("click", (e) => {
-  const p = e.target.closest(".pill");
-  if (!p) return;
-  if (p.hasAttribute("data-new-list")) { openNewList(); return; }
-  if (p.dataset.view === view) return;
-  view = p.dataset.view;
-  lsSet("rp-view", view);
-  showDone = false;
-  composerList = null;
-  closeOpenRow();
-  render();
-  $("scroll").scrollTo({ top: 0, behavior: REDUCED.matches ? "auto" : "smooth" });
-  p.scrollIntoView({ inline: "nearest", block: "nearest", behavior: "smooth" });
-  if (!REDUCED.matches) listEl.animate([{ opacity: 0.4, transform: "translateY(6px)" }, { opacity: 1, transform: "none" }], { duration: 260, easing: "ease-out" });
+const homeEl = $("home"), pageEl = $("page");
+const nav = new Spring(1, {
+  response: 0.42, damping: 1, restDelta: 0.001,
+  onUpdate: (p) => {
+    pageEl.style.transform = `translate3d(${(p * 100).toFixed(3)}%,0,0)`;
+    homeEl.style.transform = p >= 0.999 ? "" : `translate3d(${((p - 1) * 28).toFixed(3)}%,0,0)`;
+    homeEl.style.setProperty("--dim", String(Math.max(0, (1 - p) * 0.4)));
+  },
+  onRest: () => { if (nav.x >= 0.999) pageEl.hidden = true; },
 });
 
+function openView(v) {
+  closeOpenRow(true);
+  view = v;
+  showDone = false;
+  composerList = null;
+  pageEl.hidden = false;
+  $("scroll").scrollTop = 0;
+  pageEl.classList.remove("scrolled");
+  render();
+  nav.to(0, { damping: 1 });
+}
+
+function goHome(velocity = 0) {
+  if (view === "home") return;
+  closeOpenRow(true);
+  view = "home";
+  composerList = null;
+  nav.to(1, { velocity, damping: 1 });
+  render();
+}
+
+$("back").addEventListener("click", () => goHome());
+
+let edge = null;
+pageEl.addEventListener("pointerdown", (e) => {
+  if (view === "home" || e.clientX > 30) return;
+  edge = { pid: e.pointerId, x0: e.clientX, y0: e.clientY, tr: tracker(), go: false };
+  edge.tr.add(e.clientX, e.timeStamp);
+}, true);
+pageEl.addEventListener("pointermove", (e) => {
+  if (!edge || e.pointerId !== edge.pid) return;
+  const dx = e.clientX - edge.x0, dy = e.clientY - edge.y0;
+  if (!edge.go) {
+    if (dx > 10 && dx > Math.abs(dy)) { edge.go = true; g = null; capture(pageEl, e.pointerId); }
+    else if (Math.abs(dy) > 10 || dx < -10) { edge = null; return; }
+    else return;
+  }
+  edge.tr.add(e.clientX, e.timeStamp);
+  nav.hold(Math.max(0, dx) / innerWidth);
+}, true);
+const edgeEnd = (e) => {
+  if (!edge || e.pointerId !== edge.pid) return;
+  const { go, tr } = edge;
+  edge = null;
+  if (!go) return;
+  const v = tr.velocity();
+  if (nav.x + project(v) / innerWidth > 0.5) goHome(v / innerWidth);
+  else nav.to(0, { velocity: v / innerWidth, damping: 1 });
+};
+pageEl.addEventListener("pointerup", edgeEnd, true);
+pageEl.addEventListener("pointercancel", edgeEnd, true);
+
+homeBody.addEventListener("click", (e) => {
+  const o = e.target.closest("[data-open]");
+  if (o) { buzz(6); openView(o.dataset.open); return; }
+  if (e.target.closest("[data-new-list]")) openNewList((l) => openView(`l:${l.id}`));
+});
+
+const searchEl = $("search");
+searchEl.addEventListener("input", () => { query = searchEl.value; renderHome(Date.now()); });
+searchEl.addEventListener("focus", () => document.body.classList.add("searching"));
+searchEl.addEventListener("blur", () => document.body.classList.remove("searching"));
+
+/* La petite barre du haut apparaît quand le grand titre est passé. */
+for (const [scroller, screen] of [[$("home-scroll"), homeEl], [$("scroll"), pageEl]]) {
+  scroller.addEventListener("scroll", () => screen.classList.toggle("scrolled", scroller.scrollTop > 44), { passive: true });
+}
+
+/* ══ Interactions sur les rangées ════════════════════════════ */
+
 let justSwiped = 0;
-listEl.addEventListener("click", (e) => {
+const onRows = (ev, fn) => [listEl, homeBody].forEach((h) => h.addEventListener(ev, fn));
+onRows("click", (e) => {
   if (Date.now() - justSwiped < 350) return;
   if (e.target.closest("#done-toggle")) { showDone = !showDone; render(); return; }
   const row = e.target.closest(".row");
@@ -260,7 +396,7 @@ function onCheck(id, row) {
   const recurring = !!(r.repeat && r.due);
   checking.set(id, setTimeout(async () => {
     checking.delete(id);
-    const cur = listEl.querySelector(`.row[data-id="${id}"]`);
+    const cur = document.querySelector(`.row[data-id="${id}"]`);
     if (!recurring) await collapse(cur);
     const info = S.completeReminder(id);
     if (!info) return;
@@ -309,14 +445,14 @@ function closeOpenRow(instant) {
   openRow = null;
 }
 
-listEl.addEventListener("pointerdown", (e) => {
+onRows("pointerdown", (e) => {
   const main = e.target.closest(".row-main");
   if (!main || e.button > 0 || main.closest(".done")) return;
   if (openRow && openRow !== main) closeOpenRow();
   g = { main, pid: e.pointerId, x0: e.clientX, y0: e.clientY, from: springOf(main).x, tr: tracker(), dir: null };
   g.tr.add(e.clientX, e.timeStamp);
 });
-listEl.addEventListener("pointermove", (e) => {
+onRows("pointermove", (e) => {
   if (!g || e.pointerId !== g.pid) return;
   const dx = e.clientX - g.x0, dy = e.clientY - g.y0;
   if (!g.dir) {
@@ -347,8 +483,8 @@ const endDrag = (e) => {
   }
   g = null;
 };
-listEl.addEventListener("pointerup", endDrag);
-listEl.addEventListener("pointercancel", endDrag);
+onRows("pointerup", endDrag);
+onRows("pointercancel", endDrag);
 
 /* ══ Plus tard (snooze) ══════════════════════════════════════ */
 
@@ -493,9 +629,7 @@ function openNewList(onCreated) {
       const name = inp.value.trim(); if (!name) return;
       const l = S.addList(name);
       closeSheet();
-      if (onCreated) { onCreated(l); return; }
-      view = `l:${l.id}`; lsSet("rp-view", view);
-      render();
+      if (onCreated) onCreated(l); else openView(`l:${l.id}`);
     };
     ok.addEventListener("click", go);
     inp.addEventListener("keydown", (e) => { if (e.key === "Enter") go(); });
@@ -826,37 +960,56 @@ $("composer-form").addEventListener("submit", (e) => {
   pop(sendBtn, 1.2);
   if (!inView(r, view, Date.now())) {
     toast(`Ajouté à « ${listOf(r.list_id).name} »${r.due ? ` · ${fmtDue(r.due)}` : ""}`, {
-      action: "Voir", onAction: () => { view = `l:${r.list_id}`; lsSet("rp-view", view); render(); },
+      action: "Voir", onAction: () => openView(`l:${r.list_id}`),
     });
   }
   render();
 });
 
-/* Dictée : la reconnaissance vocale du navigateur, en français
-   d'ici. (Le micro du clavier iOS marche aussi, partout.) */
-const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-let rec = null;
-if (SR) {
-  const mic = $("mic");
+/* Dictée : on enregistre (voice.js), le serveur transcrit (Whisper),
+   le texte arrive dans le champ comme si on l'avait tapé — avec les
+   pastilles qui se remplissent. L'anneau autour du micro suit la voix. */
+if (Voice.supported()) {
+  const mic = $("mic"), ring = mic.querySelector(".mic-ring");
   mic.hidden = false;
-  mic.addEventListener("click", () => {
-    if (rec) { rec.stop(); return; }
-    rec = new SR();
-    rec.lang = "fr-CA";
-    rec.interimResults = true;
-    rec.continuous = false;
-    const base = input.value.trim() ? input.value.trim() + " " : "";
-    rec.onresult = (e) => {
-      let txt = "";
-      for (const res of e.results) txt += res[0].transcript;
-      input.value = base + txt;
-      renderComposer();
-    };
-    rec.onerror = (e) => {
-      if (e.error === "not-allowed" || e.error === "service-not-allowed") toast("Micro refusé. Utilise le micro du clavier à la place.");
-    };
-    rec.onend = () => { rec = null; mic.classList.remove("on"); renderComposer(); };
-    try { rec.start(); mic.classList.add("on"); buzz(8); } catch (_) { rec = null; }
+  let busy = false;
+  const setMic = (state) => {
+    mic.dataset.state = state;
+    mic.setAttribute("aria-label", state === "rec" ? "Arrêter la dictée" : state === "busy" ? "Transcription en cours" : "Dicter");
+    input.placeholder = state === "rec" ? "Je t'écoute…" : state === "busy" ? "Transcription…" : "Nouveau rappel…";
+  };
+  mic.addEventListener("click", async () => {
+    if (Voice.recording()) { Voice.stop(); return; }
+    if (busy) return;
+    buzz(10);
+    let res;
+    try {
+      setMic("rec");
+      composerEl.classList.add("active");
+      res = await Voice.record({ onLevel: (lv) => { ring.style.transform = `scale(${1 + lv * 0.9})`; ring.style.opacity = String(0.25 + lv * 0.6); } });
+    } catch (e) {
+      setMic("");
+      toast(e?.name === "NotAllowedError" ? "Micro refusé. Réglages iOS → Rappels → Micro." : "Micro indisponible.");
+      return;
+    }
+    ring.style.transform = ""; ring.style.opacity = "";
+    if (!res?.blob) { setMic(""); renderComposer(); toast("Je n'ai rien entendu."); return; }
+    busy = true;
+    setMic("busy");
+    try {
+      const text = await S.transcribe(res.blob);
+      if (!text) toast("Je n'ai pas compris, réessaie.");
+      else {
+        const base = input.value.trim();
+        input.value = (base ? base + " " : "") + text.replace(/[.!?…]+$/, "");
+        buzz([8, 30, 8]);
+      }
+    } catch (e) {
+      toast(navigator.onLine ? `Transcription impossible : ${e.message}` : "Pas de réseau pour la dictée.");
+    }
+    busy = false;
+    setMic("");
+    renderComposer();
   });
 }
 
@@ -910,7 +1063,6 @@ function showSetup() {
 }
 
 $("open-settings").addEventListener("click", openSettings);
-$("scroll").addEventListener("scroll", (e) => { $("app").classList.toggle("scrolled", e.target.scrollTop > 44); }, { passive: true });
 
 S.onChange(() => {
   /* Pas de re-rendu pendant qu'on glisse une rangée. */
