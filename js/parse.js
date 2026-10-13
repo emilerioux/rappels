@@ -1,14 +1,14 @@
 /* ============================================================
-   parse.js â€” lit une phrase comme on la dit :
-     Â« demain 15h appeler maman Â»
-     Â« rappelle-moi de sortir le recyclage chaque mardi soir Â»
-     Â« dans 20 min sortir le linge #perso Â»
-     Â« le 28 oct Ã  10h30 remettre le labo #Ã©cole Â»
+   parse.js — lit une phrase comme on la dit :
+     « demain 15h appeler maman »
+     « rappelle-moi de sortir le recyclage chaque mardi soir »
+     « dans 20 min sortir le linge #perso »
+     « le 28 oct à 10h30 remettre le labo #école »
    et en tire { title, due, repeat, listId }.
 
-   MÃ©thode : on travaille sur une copie Â« pliÃ©e Â» (minuscules, sans
-   accents) de mÃªme longueur que l'original ; chaque expression
-   reconnue est effacÃ©e de l'original, ce qui reste est le titre.
+   Méthode : on travaille sur une copie « pliée » (minuscules, sans
+   accents) de même longueur que l'original ; chaque expression
+   reconnue est effacée de l'original, ce qui reste est le titre.
    ============================================================ */
 
 import { startOfDay, addDays, nextDue } from "./dates.js";
@@ -27,16 +27,60 @@ const PREP = "(?:(?:a|vers|pour|avant|des|d'ici)\\s+)?";
 
 export const fold = (s) => Array.from({ length: s.length }, (_, i) => {
   const c = s[i];
-  if (c === "â€™" || c === "â€˜") return "'";
+  if (c === "’" || c === "‘") return "'";
   return ((c.normalize("NFD")[0] || c).toLowerCase())[0] || c;
 }).join("");
 
+/* Mots de date tapés vite → la bonne forme. Liste explicite plutôt
+   qu'une recherche floue : « marie » ne doit jamais devenir « mardi ». */
+const TYPOS = {
+  demin: "demain", deman: "demain", demian: "demain", demaim: "demain", dmain: "demain", deamin: "demain",
+  demmain: "demain", demaib: "demain", dem1: "demain", dmn: "demain",
+  ajd: "aujourd'hui", aujd: "aujourd'hui", aujourdhui: "aujourd'hui", aujourdui: "aujourd'hui",
+  ajourdhui: "aujourd'hui", aujoudhui: "aujourd'hui", aujourhui: "aujourd'hui", aujoud: "aujourd'hui",
+  lundy: "lundi", lindi: "lundi", lnudi: "lundi", lunid: "lundi",
+  mardy: "mardi", madri: "mardi", mradi: "mardi", mardu: "mardi",
+  mercerdi: "mercredi", mecredi: "mercredi", mercedi: "mercredi", mercrdi: "mercredi", merdredi: "mercredi",
+  mercredie: "mercredi", mercreid: "mercredi", mecrcredi: "mercredi", mercrei: "mercredi",
+  jeudy: "jeudi", jedi: "jeudi", jeudie: "jeudi", juedi: "jeudi", jeuid: "jeudi",
+  vendredie: "vendredi", vendedi: "vendredi", vendrdi: "vendredi", vendrei: "vendredi", vnedredi: "vendredi",
+  venderdi: "vendredi", vendredu: "vendredi", vendredy: "vendredi",
+  samdi: "samedi", samedie: "samedi", samdei: "samedi", smaedi: "samedi", samedu: "samedi",
+  dimance: "dimanche", dimanch: "dimanche", dimache: "dimanche", dimanhe: "dimanche", dimnache: "dimanche",
+  soire: "soir", sior: "soir", matain: "matin", matim: "matin", mtin: "matin",
+  procahine: "prochaine", prochine: "prochaine", prochaien: "prochaine", prochin: "prochain", procahin: "prochain",
+  minuites: "minutes", minues: "minutes", miutes: "minutes", heurs: "heures", heurse: "heures",
+  setembre: "septembre", septembe: "septembre", ocotbre: "octobre", otcobre: "octobre", novmebre: "novembre",
+  novembe: "novembre", decmbre: "décembre", decembe: "décembre", janver: "janvier", fevier: "février",
+  chaques: "chaque", chque: "chaque", chaqe: "chaque", touts: "tous",
+};
+
+export function fixDateTypos(text) {
+  return text.replace(/[\p{L}\d'’]+/gu, (w) => {
+    const fix = TYPOS[fold(w)];
+    if (!fix) return w;
+    return w[0] === w[0].toUpperCase() && w[0] !== w[0].toLowerCase() ? fix[0].toUpperCase() + fix.slice(1) : fix;
+  });
+}
+
+/* Format du titre : espaces, ponctuation, majuscule. */
+export function tidy(title) {
+  return title
+    .replace(/\s+/g, " ")
+    .replace(/\s+([,.])/g, "$1")
+    .replace(/([,.!?])\1+/g, "$1")
+    .replace(/,(?=\S)/g, ", ")
+    .replace(/[\s,;:.–-]+$/, "")
+    .trim()
+    .replace(/^./, (c) => c.toUpperCase());
+}
+
 export function parse(input, { now = Date.now(), lists = [] } = {}) {
-  const text = String(input || "").normalize("NFC");
+  const text = fixDateTypos(String(input || "").normalize("NFC"));
   let low = fold(text);
   const cut = new Array(text.length).fill(false);
 
-  /* Cherche `re` dans le texte pas encore consommÃ© ; `fn` reÃ§oit le
+  /* Cherche `re` dans le texte pas encore consommé ; `fn` reçoit le
      match et renvoie false pour le refuser. */
   const take = (re, fn) => {
     const g = new RegExp(re.source, re.flags.includes("g") ? re.flags : re.flags + "g");
@@ -54,7 +98,7 @@ export function parse(input, { now = Date.now(), lists = [] } = {}) {
 
   let listId = null, rel = null, day = null, time = null, period = null, repeat = null;
 
-  /* 1. Liste : Â« #Ã©cole Â» (au moins 2 lettres, dÃ©but du nom). */
+  /* 1. Liste : « #école » (au moins 2 lettres, début du nom). */
   take(/(?<![\w#])#([a-z0-9_-]{2,})/, (m) => {
     const tag = m[1].replace(/[-_]/g, "");
     const l = lists.find((l) => fold(l.name).replace(/[^a-z0-9]/g, "").startsWith(tag));
@@ -62,13 +106,13 @@ export function parse(input, { now = Date.now(), lists = [] } = {}) {
     listId = l.id;
   });
 
-  /* 2. Formules d'entrÃ©e. */
+  /* 2. Formules d'entrée. */
   take(/^\s*(?:(?:hey|eh|ok)\s+)?(?:rappelle[- ]?moi|rappelles?[- ]?moi|rappel|il\s+faut\s+que\s+je|faut\s+que\s+je|(?:n')?oublie\s+pas|ne\s+pas\s+oublier)\s*(?:de\s+|d'|que\s+|qu'|:\s*)?/, () => {});
 
-  /* 3. Relatif : Â« dans 20 min Â», Â« dans 1h30 Â», Â« dans une heure Â». */
+  /* 3. Relatif : « dans 20 min », « dans 1h30 », « dans une heure ». */
   take(/\bdans\s+(?:une\s+)?demi[- ]?heure\b/, () => { rel = 30 * 60e3; });
   take(/\bdans\s+un\s+quart\s+d'heure\b/, () => { rel = 15 * 60e3; });
-  take(new RegExp(`\\bdans\\s+(\\d+(?:[.,]\\d+)?|${Object.keys(WORDNUM).join("|")})\\s*(minutes?|mins?|mn|heures?|hres?|h|jours?|j|semaines?|sem|mois|m)(?![a-z])(?:\\s*(\\d{1,2})(?!\\d))?`), (m) => {
+  take(new RegExp(`\\bdans\\s+(\\d+(?:[.,]\\d+)?|${Object.keys(WORDNUM).join("|")})\\s*(minutes?|mins?|mn|heures?|hres?|hrs?|h|jours?|j|semaines?|sem|mois|m)(?![a-z])(?:\\s*(\\d{1,2})(?!\\d))?`), (m) => {
     const n = WORDNUM[m[1]] ?? parseFloat(m[1].replace(",", "."));
     const u = m[2];
     if (/^h/.test(u)) rel = n * 3600e3 + (m[3] ? +m[3] * 60e3 : 0);
@@ -78,7 +122,7 @@ export function parse(input, { now = Date.now(), lists = [] } = {}) {
     else if (u === "mois") { const d = new Date(now); d.setMonth(d.getMonth() + n); day = startOfDay(d.getTime()); return; }
   });
 
-  /* 4. RÃ©pÃ©titions. */
+  /* 4. Répétitions. */
   take(/\b(?:en\s+semaine|(?:chaque|tous\s+les)\s+jours?\s+de\s+(?:la\s+)?semaine|du\s+lundi\s+au\s+vendredi)\b/, () => { repeat = "weekdays"; });
   take(/\b(?:chaque|tous\s+les|toutes\s+les)\s+(jours?|matins?|midis?|soirs?|soirees?|nuits?)\b/, (m) => {
     repeat = "daily";
@@ -129,13 +173,13 @@ export function parse(input, { now = Date.now(), lists = [] } = {}) {
     day = t;
   });
 
-  /* 6. Moments de la journÃ©e laissÃ©s seuls (Â« demain matin Â»). */
+  /* 6. Moments de la journée laissés seuls (« demain matin »). */
   take(/\b(?:le\s+|au\s+|en\s+|dans\s+l'|l')?(matin|apres[- ]midi|aprem|soir|soiree|nuit)\b/, (m) => { period = PERIOD[m[1]]; });
 
   /* 7. Heures. */
   take(new RegExp(`\\b${PREP}midi\\b`), () => { time = [12, 0]; });
   take(new RegExp(`\\b${PREP}minuit\\b`), () => { time = [23, 59]; });
-  take(new RegExp(`\\b${PREP}(\\d{1,2})\\s*(?:h|heures?|:)\\s*(\\d{2})?(?:\\s*(am|pm))?(?![a-z0-9])`), (m) => {
+  take(new RegExp(`\\b${PREP}(\\d{1,2})\\s*(?:hres?|hrs?|heures?|h|:)\\s*(\\d{2})?(?:\\s*(am|pm))?(?![a-z0-9])`), (m) => {
     let h = +m[1]; const mi = m[2] ? +m[2] : 0;
     if (m[3] === "pm" && h < 12) h += 12;
     if (m[3] === "am" && h === 12) h = 0;
@@ -149,7 +193,7 @@ export function parse(input, { now = Date.now(), lists = [] } = {}) {
     time = [h, 0];
   });
 
-  /* â”€â”€ Ã‰chÃ©ance â”€â”€ */
+  /* ── Échéance ── */
   let due = null;
   if (rel != null) {
     due = now + rel;
@@ -159,11 +203,11 @@ export function parse(input, { now = Date.now(), lists = [] } = {}) {
     due = at(day ?? startOfDay(now));
     if (day == null && due <= now) {
       /* Pas de jour dit : la prochaine fois que cette heure arrive
-         (en respectant les jours d'une rÃ©pÃ©tition). */
+         (en respectant les jours d'une répétition). */
       const allowed = repeat === "weekdays" ? [1, 2, 3, 4, 5] : null;
       due = at(allowed ? nextWeekday(addDays(now, 1), allowed, true) : addDays(startOfDay(now), 1));
     } else if (day != null && due <= now && dayDiffFrom(now, day) === 0 && !time) {
-      /* Â« aujourd'hui Â» sans heure, alors que 9 h est passÃ© : dans
+      /* « aujourd'hui » sans heure, alors que 9 h est passé : dans
          la prochaine heure pile. */
       const x = new Date(now); x.setMinutes(0, 0, 0); x.setHours(x.getHours() + 1);
       due = x.getTime();
@@ -175,14 +219,14 @@ export function parse(input, { now = Date.now(), lists = [] } = {}) {
     /* « chaque mardi et jeudi à 10 h », dit un mardi à midi : jeudi. */
     if (repeat && due <= now) due = nextDue(due, repeat, now) ?? due;
   }
-  /* â”€â”€ Titre : ce qui reste, sans les petits mots orphelins
-     (Â« Ã  Â», Â« de Â», Â« le Â»â€¦) laissÃ©s aux bords. â”€â”€ */
+  /* ── Titre : ce qui reste, sans les petits mots orphelins
+     (« à », « de », « le »…) laissés aux bords. ── */
   let title = Array.from({ length: text.length }, (_, i) => (cut[i] ? " " : text[i])).join("");
   title = title.replace(/\s+/g, " ").trim();
-  const head = /^(?:(?:de|du|Ã |a|le|la|pour|et|puis)\s+|d['â€™]|[,:â€“-]\s*)/i;
-  const tail = /(?:\s+(?:Ã |a|le|la|pour|de|du|et)|\s*[,:â€“-])$/i;
+  const head = /^(?:(?:de|du|à|a|le|la|pour|et|puis)\s+|d['’]|[,:–-]\s*)/i;
+  const tail = /(?:\s+(?:à|a|le|la|pour|de|du|et)|\s*[,:–-])$/i;
   for (let i = 0; i < 4; i++) title = title.replace(head, "").replace(tail, "").trim();
-  title = title.charAt(0).toUpperCase() + title.slice(1);
+  title = tidy(title);
 
   return { title, due, repeat: due ? repeat : null, listId };
 }

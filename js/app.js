@@ -2,14 +2,15 @@
    app.js — l'écran principal, le compositeur, les feuilles.
    ============================================================ */
 
-import { parse } from "./parse.js";
+import { parse, tidy } from "./parse.js";
+import * as Sg from "./suggest.js";
 import { fmtDue, hhmm, dayLabel, startOfDay, addDays, repeatLabel, REPEAT_CHOICES, toInput, fromInput } from "./dates.js";
 import * as S from "./store.js";
 import { openSheet, closeSheet, sheetIsOpen, toast, esc } from "./ui.js";
 import { Spring, project, rubberband, tracker, capture, buzz, pop, REDUCED } from "./motion.js";
 
 const $ = (id) => document.getElementById(id);
-const VERSION = "v1";
+const VERSION = "v2";
 
 const I = {
   check: '<svg viewBox="0 0 24 24"><path d="M5 12.5l4.2 4.2L19 7"/></svg>',
@@ -19,6 +20,8 @@ const I = {
   trash: '<svg viewBox="0 0 24 24"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 12a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-12M9 7V4h6v3"/></svg>',
   snooze: '<svg viewBox="0 0 24 24"><circle cx="12" cy="13" r="8"/><path d="M12 9v4l2 2M5 3 2 6M22 6l-3-3"/></svg>',
   plus: '<svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>',
+  pen: '<svg viewBox="0 0 24 24"><path d="M4 20h4L19 9l-4-4L4 16z"/><path d="m13.5 6.5 4 4"/></svg>',
+  history: '<svg viewBox="0 0 24 24"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5M12 7v5l3 2"/></svg>',
   list: '<svg viewBox="0 0 24 24"><path d="M9 6h11M9 12h11M9 18h11"/><circle cx="4.5" cy="6" r="1"/><circle cx="4.5" cy="12" r="1"/><circle cx="4.5" cy="18" r="1"/></svg>',
 };
 
@@ -31,7 +34,6 @@ const lsSet = (k, v) => { try { localStorage.setItem(k, v); } catch (_) {} };
 
 let view = lsGet("rp-view") || "today";
 let showDone = false;
-let composerList = null;
 let pushOn = false;
 let lastNewId = null;
 const checking = new Map();       // id → minuterie : cochés, pas encore partis
@@ -188,7 +190,7 @@ function render() {
   }
 
   renderBanner();
-  updateComposer();
+  renderComposer();
   if ("setAppBadge" in navigator) {
     try { lateCount ? navigator.setAppBadge(lateCount) : navigator.clearAppBadge(); } catch (_) {}
   }
@@ -220,6 +222,7 @@ $("pills").addEventListener("click", (e) => {
   view = p.dataset.view;
   lsSet("rp-view", view);
   showDone = false;
+  composerList = null;
   closeOpenRow();
   render();
   $("scroll").scrollTo({ top: 0, behavior: REDUCED.matches ? "auto" : "smooth" });
@@ -479,7 +482,7 @@ function openDetail(id, { fromPush = false } = {}) {
 
 /* ══ Listes ══════════════════════════════════════════════════ */
 
-function openNewList() {
+function openNewList(onCreated) {
   openSheet(`
     <div class="sheet-head"><button class="head-btn" data-close>Annuler</button><span class="sheet-title">Nouvelle liste</span><button class="head-btn strong" id="nl-ok" disabled>Créer</button></div>
     <div class="sheet-body"><label class="field"><span>Nom</span><input id="nl-name" placeholder="ex. Gym, Appart, Travail" autofocus enterkeyhint="done"></label></div>`,
@@ -489,8 +492,10 @@ function openNewList() {
     const go = () => {
       const name = inp.value.trim(); if (!name) return;
       const l = S.addList(name);
+      closeSheet();
+      if (onCreated) { onCreated(l); return; }
       view = `l:${l.id}`; lsSet("rp-view", view);
-      closeSheet(); render();
+      render();
     };
     ok.addEventListener("click", go);
     inp.addEventListener("keydown", (e) => { if (e.key === "Enter") go(); });
@@ -622,50 +627,233 @@ async function refreshPush() {
   } catch (_) { pushOn = false; }
 }
 
-/* ══ Compositeur ═════════════════════════════════════════════ */
+/* ══ Compositeur ═════════════════════════════════════════════
+   En tapant, la phrase est lue en direct et une rangée de pastilles
+   propose : une correction d'orthographe, l'heure habituelle, une
+   date rapide, la répétition et la liste. Au-dessus, les anciens
+   rappels qui commencent pareil. Ce qu'on touche l'emporte sur ce
+   que la phrase disait. Le clavier reste ouvert pendant tout ça. */
 
-const input = $("composer-input"), chips = $("chips"), sendBtn = $("send"), dotBtn = $("composer-list");
+const input = $("composer-input"), chips = $("chips"), sugg = $("suggest"), sendBtn = $("send"), dotBtn = $("composer-list");
+const composerEl = $("composer");
+let manual = {};            // choix touchés pour CE rappel : due, repeat, listId
+let composerList = null;    // liste choisie, gardée d'un ajout à l'autre
+let composerFocus = false;
 
-function targetList(p) {
-  if (p?.listId) return p.listId;
-  if (composerList) return composerList;
+function defaultList() {
+  if (composerList && S.getState().lists.some((l) => l.id === composerList)) return composerList;
   if (view.startsWith("l:")) return view.slice(2);
   return S.getState().lists[0]?.id;
 }
 
-function updateComposer() {
-  const st = S.getState();
-  const p = input.value.trim() ? parse(input.value, { lists: st.lists }) : null;
-  const l = listOf(targetList(p));
-  dotBtn.style.setProperty("--c", l.color);
-  dotBtn.setAttribute("aria-label", `Liste : ${l.name} (toucher pour changer)`);
-  sendBtn.disabled = !p?.title;
-  if (!p) { chips.innerHTML = ""; chips.classList.remove("show"); return; }
-  const c = [];
-  if (p.due) c.push(`<span class="chip">${I.clock}${esc(fmtDue(p.due))}</span>`);
-  if (p.repeat) c.push(`<span class="chip">${I.repeat}${esc(repeatLabel(p.repeat))}</span>`);
-  c.push(`<span class="chip lst" style="--c:${l.color}"><i></i>${esc(l.name)}</span>`);
-  chips.innerHTML = c.join("");
-  chips.classList.add("show");
+function draft() {
+  const raw = input.value;
+  const p = raw.trim() ? parse(raw, { lists: S.getState().lists }) : { title: "", due: null, repeat: null, listId: null };
+  const due = "due" in manual ? manual.due : p.due;
+  const repeat = due ? ("repeat" in manual ? manual.repeat : p.repeat) : null;
+  return { title: p.title, due, repeat, listId: manual.listId || p.listId || defaultList(), parsed: p };
 }
 
-input.addEventListener("input", updateComposer);
-dotBtn.addEventListener("click", () => {
-  const lists = S.getState().lists;
-  const cur = targetList(input.value.trim() ? parse(input.value, { lists }) : null);
-  composerList = lists[(lists.findIndex((l) => l.id === cur) + 1) % lists.length].id;
-  pop(dotBtn, 1.25);
-  buzz(6);
-  updateComposer();
-  if (!input.value.trim()) toast(`Nouveaux rappels dans « ${listOf(composerList).name} »`, { ms: 1600 });
+const atDay = (days, h, m = 0, now = Date.now()) => {
+  const d = new Date(addDays(startOfDay(now), days)); d.setHours(h, m, 0, 0); return d.getTime();
+};
+
+function quickDates(now = Date.now()) {
+  const out = [];
+  if (new Date(now).getHours() < 18) out.push(["Ce soir", atDay(0, 19, 0, now)]);
+  else { const d = new Date(now + 3600e3); d.setMinutes(d.getMinutes() < 30 ? 30 : 60, 0, 0); out.push([`À ${hhmm(d.getTime())}`, d.getTime()]); }
+  out.push(["Demain 9 h", atDay(1, 9, 0, now)]);
+  const toMonday = ((8 - new Date(now).getDay()) % 7) || 7;
+  if (toMonday > 1) out.push(["Lundi 9 h", atDay(toMonday, 9, 0, now)]);
+  return out;
+}
+
+function renderComposer() {
+  const d = draft();
+  const now = Date.now();
+  const l = listOf(d.listId);
+  dotBtn.style.setProperty("--c", l.color);
+  dotBtn.setAttribute("aria-label", `Liste : ${l.name} (changer)`);
+  sendBtn.disabled = !d.title;
+  const typing = !!input.value.trim();
+  composerEl.classList.toggle("active", typing || composerFocus || !!menuEl);
+
+  /* Complétion (sur le texte corrigé : « apeler » trouve « Appeler maman ») */
+  const fix = typing && d.title ? Sg.spell(d.title) : null;
+  const q = fix ? d.title.replace(fix.from, fix.to) : d.title;
+  const comps = typing ? Sg.complete(q || input.value, 3) : [];
+  sugg._items = comps;
+  sugg.innerHTML = comps.map((e, i) => {
+    const h = Sg.habit(e.t), lst = S.getState().lists.find((x) => x.id === e.l);
+    const meta = [h ? hhmm(atDay(0, h.h, h.m)) : "", lst ? `<i style="background:${lst.color}"></i>${esc(lst.name)}` : ""].filter(Boolean).join(" · ");
+    return `<button type="button" class="sug" data-i="${i}">${I.history}<span>${esc(e.t)}</span>${meta ? `<small>${meta}</small>` : ""}</button>`;
+  }).join("");
+
+  /* Pastilles */
+  const c = [];
+  if (fix) c.push(`<button type="button" class="chip fix" data-fix="${esc(fix.from)}" data-to="${esc(fix.to)}" aria-label="Corriger ${esc(fix.from)} en ${esc(fix.to)}">${I.pen}<s>${esc(fix.from)}</s>${esc(fix.to)}</button>`);
+  const hab = typing && !d.due && d.title ? Sg.habit(d.title) : null;
+  if (hab) {
+    c.push(`<button type="button" class="chip habit" data-due="${Sg.nextAt(hab.h, hab.m)}"${hab.repeat ? ` data-rep="${hab.repeat}"` : ""}${hab.list ? ` data-list="${hab.list}"` : ""}>
+      ${I.history}${hhmm(atDay(0, hab.h, hab.m))} · ${hab.times > 1 ? "comme d'hab" : "comme la dernière fois"}</button>`);
+  }
+  if (d.due) {
+    c.push(`<span class="chip on date"><label class="pick">${I.cal}<span>${esc(fmtDue(d.due, now))}</span>
+      <input type="datetime-local" data-pick value="${toInput(d.due)}" aria-label="Changer la date"></label>
+      <button type="button" class="x" data-clear aria-label="Enlever la date"><svg viewBox="0 0 24 24"><path d="M7 7l10 10M17 7 7 17"/></svg></button></span>`);
+  } else {
+    for (const [label, t] of quickDates(now)) c.push(`<button type="button" class="chip" data-due="${t}">${label}</button>`);
+    c.push(`<label class="chip pick">${I.cal}<span>Date…</span><input type="datetime-local" data-pick aria-label="Choisir une date"></label>`);
+  }
+  c.push(`<button type="button" class="chip${d.repeat ? " on" : ""}" data-menu="repeat">${I.repeat}${d.repeat ? esc(repeatLabel(d.repeat)) : "Répéter"}</button>`);
+  c.push(`<button type="button" class="chip lst" data-menu="list" style="--c:${l.color}"><i></i>${esc(l.name)}<svg class="caret" viewBox="0 0 24 24"><path d="m7 10 5 5 5-5"/></svg></button>`);
+  chips.innerHTML = c.join("");
+}
+
+/* Toucher une pastille ne doit pas fermer le clavier. */
+const keepFocus = () => { if (composerFocus) input.focus({ preventScroll: true }); };
+for (const el of [chips, sugg, dotBtn]) {
+  for (const ev of ["pointerdown", "mousedown"]) {
+    el.addEventListener(ev, (e) => { if (!e.target.closest("[data-pick]")) e.preventDefault(); });
+  }
+}
+
+input.addEventListener("input", () => {
+  if (!input.value.trim()) manual = {};          // champ vidé : on repart de zéro
+  renderComposer();
 });
+input.addEventListener("focus", () => { composerFocus = true; renderComposer(); });
+input.addEventListener("blur", () => setTimeout(() => {
+  composerFocus = document.activeElement === input;
+  if (!composerFocus && !menuEl) renderComposer();
+}, 180));
+
+const reEsc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+chips.addEventListener("click", (e) => {
+  const b = e.target.closest("button");
+  if (!b) return;
+  if (b.dataset.menu) { toggleMenu(b, b.dataset.menu); return; }
+  if (b.dataset.fix) {
+    const re = new RegExp(`(^|[^\\p{L}])(${reEsc(b.dataset.fix)})(?![\\p{L}])`, "iu");
+    input.value = input.value.replace(re, (_, pre, w) => pre + (w[0] === w[0].toLowerCase() ? b.dataset.to.toLowerCase() : b.dataset.to));
+  } else if (b.dataset.due) {
+    manual.due = +b.dataset.due;
+    if (b.dataset.rep && !("repeat" in manual)) manual.repeat = b.dataset.rep;
+    if (b.dataset.list && !manual.listId && !draft().parsed.listId) manual.listId = b.dataset.list;
+  } else if ("clear" in b.dataset) {
+    manual.due = null;
+  }
+  buzz(6);
+  renderComposer();
+  keepFocus();
+});
+chips.addEventListener("change", (e) => {
+  if (!e.target.matches("[data-pick]")) return;
+  manual.due = fromInput(e.target.value);
+  renderComposer();
+});
+
+sugg.addEventListener("click", (e) => {
+  const b = e.target.closest(".sug");
+  if (!b) return;
+  const it = sugg._items[+b.dataset.i];
+  const p = draft().parsed;
+  if (p.due && !("due" in manual)) manual.due = p.due;          // « demain app… » garde son « demain »
+  if (p.repeat && !("repeat" in manual)) manual.repeat = p.repeat;
+  if (!manual.listId && !p.listId && S.getState().lists.some((l) => l.id === it.l)) manual.listId = it.l;
+  input.value = it.t;
+  buzz(6);
+  renderComposer();
+  keepFocus();
+});
+
+dotBtn.addEventListener("click", () => toggleMenu(dotBtn, "list"));
+
+/* ── Petit menu (répétition, liste) ──
+   Il naît de la pastille touchée et vit dans le compositeur, pour
+   suivre le clavier quand il bouge. */
+let menuEl = null, menuKey = null, menuClosedAt = 0, lastClosed = null;
+
+function toggleMenu(anchor, kind) {
+  if (menuKey === kind || (Date.now() - menuClosedAt < 300 && lastClosed === kind)) { closeMenu(); return; }
+  const d = draft();
+  let items;
+  if (kind === "repeat") {
+    items = [["", "Jamais"], ...REPEAT_CHOICES.slice(1)].map(([v, label]) => ({ label, v: v || null, on: (d.repeat || null) === (v || null) }));
+  } else {
+    items = S.getState().lists.map((l) => ({ label: l.name, v: l.id, dot: l.color, on: l.id === d.listId }));
+    items.push({ label: "Nouvelle liste…", v: "__new", icon: I.plus });
+  }
+  openMenu(anchor, kind, items, (it) => {
+    if (kind === "repeat") {
+      manual.repeat = it.v;
+      if (it.v && !d.due) manual.due = Sg.nextAt(9, 0);            // une répétition a besoin d'une première date
+    } else if (it.v === "__new") {
+      openNewList((l) => { manual.listId = l.id; composerList = l.id; renderComposer(); });
+      return;
+    } else {
+      manual.listId = it.v;
+      composerList = it.v;
+    }
+    renderComposer();
+    keepFocus();
+  });
+}
+
+function openMenu(anchor, kind, items, onPick) {
+  closeMenu(true);
+  const m = document.createElement("div");
+  m.className = "menu";
+  m.setAttribute("role", "menu");
+  m.innerHTML = items.map((it, i) => `<button type="button" role="menuitemradio" aria-checked="${!!it.on}" data-i="${i}">
+      ${it.dot ? `<i style="background:${it.dot}"></i>` : it.icon || ""}<span>${esc(it.label)}</span>${it.on ? I.check : ""}</button>`).join("");
+  composerEl.appendChild(m);
+  const cr = composerEl.getBoundingClientRect(), ar = anchor.getBoundingClientRect();
+  const w = m.offsetWidth;
+  const left = Math.min(Math.max(8, ar.left - cr.left), cr.width - w - 8);
+  m.style.left = `${left}px`;
+  m.style.bottom = `${cr.bottom - ar.top + 8}px`;
+  m.style.transformOrigin = `${ar.left - cr.left + ar.width / 2 - left}px 100%`;
+  if (!REDUCED.matches) m.animate([{ opacity: 0, transform: "scale(.86) translateY(6px)" }, { opacity: 1, transform: "none" }],
+    { duration: 240, easing: "cubic-bezier(.2,.9,.3,1.08)" });
+  for (const ev of ["pointerdown", "mousedown"]) m.addEventListener(ev, (e) => e.preventDefault());
+  m.addEventListener("click", (e) => {
+    const b = e.target.closest("button");
+    if (!b) return;
+    buzz(6);
+    closeMenu();
+    onPick(items[+b.dataset.i]);
+  });
+  menuEl = m;
+  menuKey = kind;
+  setTimeout(() => document.addEventListener("pointerdown", onOutside, true), 0);
+  renderComposer();
+}
+
+function onOutside(e) {
+  if (menuEl && !menuEl.contains(e.target)) { lastClosed = menuKey; menuClosedAt = Date.now(); closeMenu(); }
+}
+
+function closeMenu(instant) {
+  document.removeEventListener("pointerdown", onOutside, true);
+  if (!menuEl) return;
+  const m = menuEl;
+  menuEl = null;
+  menuKey = null;
+  if (instant || REDUCED.matches) m.remove();
+  else m.animate([{ opacity: 1 }, { opacity: 0, transform: "scale(.94)" }], { duration: 140, easing: "ease-in" }).finished.then(() => m.remove(), () => m.remove());
+}
 
 $("composer-form").addEventListener("submit", (e) => {
   e.preventDefault();
-  const p = parse(input.value, { lists: S.getState().lists });
-  if (!p.title) return;
-  const r = S.addReminder({ title: p.title, due: p.due, repeat: p.repeat, listId: targetList(p) });
+  const d = draft();
+  if (!d.title) return;
+  closeMenu(true);
+  const r = S.addReminder({ title: tidy(d.title), due: d.due, repeat: d.repeat, listId: d.listId });
+  Sg.remember(r);
   lastNewId = r.id;
+  manual = {};
   input.value = "";
   buzz(10);
   pop(sendBtn, 1.2);
@@ -695,12 +883,12 @@ if (SR) {
       let txt = "";
       for (const res of e.results) txt += res[0].transcript;
       input.value = base + txt;
-      updateComposer();
+      renderComposer();
     };
     rec.onerror = (e) => {
       if (e.error === "not-allowed" || e.error === "service-not-allowed") toast("Micro refusé. Utilise le micro du clavier à la place.");
     };
-    rec.onend = () => { rec = null; mic.classList.remove("on"); updateComposer(); };
+    rec.onend = () => { rec = null; mic.classList.remove("on"); renderComposer(); };
     try { rec.start(); mic.classList.add("on"); buzz(8); } catch (_) { rec = null; }
   });
 }
@@ -745,6 +933,7 @@ function showSetup() {
       if (!(await S.tryToken(k))) { err.textContent = "Cette clé n'est pas la bonne."; return; }
     } catch (_) { err.textContent = "Serveur injoignable. Vérifie ta connexion."; return; }
     setup.hidden = true;
+    Sg.seed(S.getState().reminders);
     history.replaceState(null, "", location.pathname);
     await refreshPush();
     render();
@@ -778,6 +967,7 @@ setInterval(() => { if (!document.hidden) S.sync(); }, 60e3);
   if (!S.hasToken()) { showSetup(); return; }
   if (location.hash) history.replaceState(null, "", location.pathname + location.search);
   await S.sync();
+  Sg.seed(S.getState().reminders);
   await refreshPush();
   render();
   const openId = new URLSearchParams(location.search).get("r");
